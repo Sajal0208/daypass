@@ -1,0 +1,72 @@
+{
+  "name": "peephole-db",
+  "version": "0.1.0",
+  "description": "Temporary, read-only, audited database access for AI coding agents. A human opens a lease; Claude Code (or any MCP client) gets SELECT-only tools until it expires.",
+  "keywords": [
+    "mcp",
+    "postgres",
+    "read-only",
+    "claude",
+    "claude-code",
+    "ai-agent",
+    "database",
+    "audit",
+    "rds",
+    "iam"
+  ],
+  "license": "MIT",
+  "author": "Vocobase <developers@vocobase.com>",
+  "type": "module",
+  "bin": {
+    "peephole": "./dist/cli/main.js"
+  },
+  "main": "./dist/mcp/index.js",
+  "types": "./dist/mcp/index.d.ts",
+  "exports": {
+    ".": "./dist/mcp/index.js",
+    "./core": "./dist/core/index.js"
+  },
+  "files": [
+    "dist",
+    "sql",
+    "certs",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sajal0208/peephole.git"
+  },
+  "homepage": "https://github.com/Sajal0208/peephole#readme",
+  "bugs": "https://github.com/Sajal0208/peephole/issues",
+  "dependencies": {
+    "@aws-sdk/client-ec2": "^3.1158.0",
+    "@aws-sdk/client-sts": "^3.1158.0",
+    "@aws-sdk/credential-providers": "^3.1158.0",
+    "@aws-sdk/rds-signer": "^3.1158.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "commander": "^12.1.0",
+    "libpg-query": "^18.2.1",
+    "pg": "^8.23.1",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
