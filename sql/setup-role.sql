@@ -16,8 +16,9 @@ BEGIN
     EXECUTE 'CREATE ROLE "__ROLE__" LOGIN';
   END IF;
 END $$;
-ALTER ROLE "__ROLE__" WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS
-  CONNECTION LIMIT 5 PASSWORD NULL;
+-- SUPERUSER / REPLICATION / BYPASSRLS are not named here: a new role never has them, and on
+-- RDS the master user is not a superuser, so even "NOSUPERUSER" is refused.
+ALTER ROLE "__ROLE__" WITH LOGIN NOCREATEDB NOCREATEROLE NOINHERIT CONNECTION LIMIT 5 PASSWORD NULL;
 
 -- RDS only. On plain Postgres (local dev) rds_iam does not exist and this is skipped.
 DO $$
