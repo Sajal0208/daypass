@@ -7,7 +7,7 @@ by itself.
 
 - [ ] Replace every `<SITE_URL>` with the real website URL. `grep -rn '<SITE_URL>' docs/launch`
       must come back empty before you post.
-- [ ] `grep -rnE 'sg-0[0-9a-f]{8,}|[0-9]{12}|rds\.amazonaws' docs/launch` shows only the
+- [ ] `scripts/scrub-check.sh` is clean, and a manual grep of `docs/launch` for security-group ids, 12-digit account ids and RDS hosts shows only the
       `123456789012` account placeholder and the README's own placeholder host
       `my-db.abc123.eu-central-1.rds.amazonaws.com`, or nothing. No real host, account,
       security group, ARN or internal table name goes into a post.

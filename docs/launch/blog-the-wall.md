@@ -89,7 +89,7 @@ config holds no secret:
       "database": "app",
       "user": "peephole_ro",
       "region": "eu-central-1",
-      "securityGroupId": "sg-0123…"   // optional: per-lease IP rule
+      "securityGroupId": "sg-xxxxxxxxxxxxxxxxx"   // optional: per-lease IP rule
     }
   }
 }
