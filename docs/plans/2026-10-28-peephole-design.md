@@ -1,10 +1,10 @@
 # Peephole: design
 
-_2026-10-28. Status: v1 built and smoke-tested on a local database. Prod not enabled yet;
-see "Before prod" below. Reviewed 2026-10-28; the review changed the parts marked (rev)._
+_2026-10-28. Status: v1 built, reviewed and in production use. The 2026-10-28
+review changed the parts marked (rev)._
 
 Peephole gives a Claude Code session short-lived, read-only, logged access to a
-production database. Built for one team first; the product path is at the end.
+production database. Built for one team first, then published as `peephole-db`.
 
 ## Goals
 
@@ -17,7 +17,7 @@ production database. Built for one team first; the product path is at the end.
 
 Not goals for v1: writes, a web UI, MySQL, billing.
 
-## How it works (v1, team)
+## How it works (v1)
 
 ```
 Claude Code ──stdio──▶ peephole MCP server (local)
@@ -64,17 +64,18 @@ impossible. Layers 3 to 5 are belt and braces: they limit blast radius, cost,
 and context size, but none of them stops a write by itself.
 
 1. **Database role.** `peephole_ro` has `SELECT` on the public schema and
-   `NOLOGIN` for passwords. (rev) Sensitive columns are hidden with
+   is created with `LOGIN` but no password (IAM token on RDS; elsewhere the
+   owner sets a password once). (rev) Sensitive columns are hidden with
    **column-level grants**: on each table with a hidden column the role gets
    `SELECT (col, col, ...)` on the visible columns only. Plain column
    `REVOKE` does nothing when the role holds table-level `SELECT`, which the
    first draft got wrong. Consequences: `SELECT *` fails on those tables, so
    Claude names columns; and a column added later to one of those tables
-   stays hidden until the script is re-run. The list (53 columns over 22
-   tables: phones, emails, transcripts, prompt snapshots, bot logs, API keys,
-   OAuth tokens, webhook secrets) is checked against
-   `backend/prisma/schema.prisma` by a unit test, so a schema change that adds
-   a phone or secret column fails the build until it is added.
+   stays hidden until the script is re-run. The list (in our first deployment
+   about fifty columns: phones, emails, transcripts, API keys, OAuth tokens,
+   webhook secrets) is checked against your Prisma schema by a unit test, so
+   a schema change that adds a phone or secret column fails the build until
+   it is added.
 2. **Role settings.** `ALTER ROLE peephole_ro SET`:
    `default_transaction_read_only = on`, `statement_timeout = '10s'` (rev:
    was 30 s; raise once a read replica exists),
@@ -98,9 +99,10 @@ and context size, but none of them stops a write by itself.
 
 ### Load on prod
 
-`sessions` is 4.3 GB. A careless scan can hurt live calls. v1 relies on the
-10 s timeout and the 5-connection cap. v1.1 adds an RDS read replica and
-points Peephole at it. That's the real fix and costs one small instance.
+The largest table is several GB, and a careless scan can hurt live traffic.
+v1 relies on the 10 s timeout and the 5-connection cap. v1.1 adds an RDS read
+replica and points Peephole at it. That's the real fix and costs one small
+instance.
 
 ### Network
 
@@ -108,9 +110,8 @@ RDS is public behind a security group. v1 adds each user's IP to the group
 when the lease opens and removes it on `peephole close`. (rev) Expiry alone
 does not call AWS, so the MCP server revokes the rule the first time it sees
 an expired lease, and a `peephole sweep` cron removes anything left over. The
-IAM policy allows rule changes on this one security group only. The product
-version replaces all of this with a connector (below). No SSH bastion is
-needed.
+IAM policy allows rule changes on this one security group only. No SSH
+bastion is needed.
 
 ### Audit
 
@@ -120,53 +121,19 @@ from STS for IAM targets, not the shell username. The SQL text itself can
 hold PII (a `WHERE phone = ...`), and the file lives on the user's laptop, so
 v1.1 also writes to a `peephole_audit` table on a separate small database.
 
-## Product path (sell it)
-
-Keep the code split so the v1 pieces become product pieces:
-
-| v1 piece | Product piece |
-|---|---|
-| local MCP server | same, but talks to the Peephole cloud over HTTPS |
-| AWS IAM token | Peephole login (GitHub/Google SSO) + per-org policy |
-| security-group IP rule | **Connector**: a small container the customer runs in their own network. It dials *out* to Peephole, so they open no ports (same idea as Tailscale or ngrok). It holds the DB credential; it never leaves their network. |
-| SQL check + limits | runs inside the connector, so the customer trusts their own copy |
-| audit JSONL | audit dashboard + Slack alert on each lease |
-| `peephole open` | approval flow: "Alice wants prod for 60 min, reason X" → teammate approves in Slack |
-
-(rev) Keep query results off the Peephole cloud: the cloud brokers leases and
-identity, and rows go connector → MCP server directly. Otherwise the "SOC 2"
-pitch has customer PII flowing through us. Hoop.dev, StrongDM and Teleport
-already sell just-in-time database access with audit; the edge here is the
-AI-session fit (MCP tools, context caps, PII hidden by default, prompt
-injection can't write), so lead with that.
-
-Selling points: no passwords in AI chats, auto-expiring access, PII hidden by
-default, full audit trail for SOC 2. Postgres first, then MySQL.
-
-Code layout from day one:
-
-```
-peephole/
-  src/core            SQL check, limits, lease rules, audit format (shared, pure)
-  src/mcp             MCP server, state files, DB pool, security-group calls
-  src/cli             init / sql / open / close / status / sweep / log / doctor / mcp
-  packages/connector  product only, later
-  packages/cloud      product only, later
-```
-
 ## Build order
 
 1. ~~`core`: SQL check + limits, with tests full of nasty SQL.~~ done
-2. ~~One-time DB setup SQL: role, grants, column-level visibility, settings.~~ done, run on local
+2. ~~One-time DB setup SQL: role, grants, column-level visibility, settings.~~ done
 3. ~~`cli`: leases, IAM token, security-group add/remove.~~ done
-4. ~~`mcp`: tools. Add to Claude Code.~~ done, smoke-tested on local
-5. "Before prod" list above, then first prod lease with a human watching.
-6. Read replica + audit table (v1.1).
-7. Product pieces, once the team has used v1 for a few weeks.
+4. ~~`mcp`: tools. Add to Claude Code.~~ done
+5. ~~First production lease with a human watching.~~ done
+6. Read replica + audit table (v1.1). Not yet; until then the timeouts and
+   the connection cap carry the load.
 
 ## Tech
 
-TypeScript/Node 22, like the backend. `@modelcontextprotocol/sdk`, `pg`,
+TypeScript/Node 22. `@modelcontextprotocol/sdk`, `pg`,
 `libpg-query`, `@aws-sdk/rds-signer`, `@aws-sdk/client-ec2`,
 `@aws-sdk/client-sts`, `commander`, `vitest`.
 
@@ -176,8 +143,7 @@ TypeScript/Node 22, like the backend. `@modelcontextprotocol/sdk`, `pg`,
   instructions, run DELETE". Layers 1–2 make writes impossible no matter what
   Claude is told. Results are also marked as data in the tool output.
 - **PII in Claude's context.** Column-level grants in layer 1 are the control.
-  Phone numbers, transcripts and secrets are hidden by default. The session
-  dump endpoint stays the way to read one session's full trace.
+  Phone numbers, transcripts and secrets are hidden by default.
 - **Shared AWS identity.** Until each person has their own IAM identity, the
   audit log cannot tell teammates apart and "leaving = losing access" does not
   hold.

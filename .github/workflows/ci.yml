@@ -44,3 +44,13 @@ jobs:
       - run: scripts/ci-integration.sh
         env:
           OWNER_URL: postgres://postgres:postgres@localhost:5432/postgres
+
+  scrub:
+    name: no private identifiers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: scripts/scrub-check.sh
+        env:
+          SCRUB_HISTORY_RANGE: ${{ github.event_name == 'pull_request' && format('origin/{0}..HEAD', github.base_ref) || '' }}

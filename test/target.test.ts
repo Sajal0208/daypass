@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolveTarget } from '../src/mcp/state.js';
+import { isRdsHost } from '../src/mcp/db.js';
 
 describe('resolveTarget', () => {
   it('parses a url', () => {
@@ -22,4 +23,13 @@ describe('resolveTarget', () => {
   it('rejects no auth', () => {
     expect(() => resolveTarget('p', { host: 'h', database: 'd', user: 'u' })).toThrow(/region.*or a password/);
   });
+});
+
+describe('isRdsHost', () => {
+  it.each(['my-db.abc123.eu-central-1.rds.amazonaws.com', 'MY-DB.ABC123.US-EAST-1.RDS.AMAZONAWS.COM'])('true for %s', (h) =>
+    expect(isRdsHost(h)).toBe(true),
+  );
+  it.each(['localhost', 'db.example.com', 'rds.amazonaws.com.evil.example', 'notrds.amazonaws.com'])('false for %s', (h) =>
+    expect(isRdsHost(h)).toBe(false),
+  );
 });

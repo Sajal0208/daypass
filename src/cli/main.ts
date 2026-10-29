@@ -8,7 +8,7 @@ import { promises as fs } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseTtl, isLeaseLive } from '../core/index.js';
+import { parseTtl, isLeaseLive, parseHiddenList } from '../core/index.js';
 import type { Lease } from '../core/index.js';
 import {
   readConfig,
@@ -27,6 +27,7 @@ import {
 } from '../mcp/index.js';
 import type { TargetConfig } from '../mcp/index.js';
 import { doctor } from './doctor.js';
+import { hiddenCommand } from './hidden.js';
 
 const require = createRequire(import.meta.url);
 const { version } = require('../../package.json') as { version: string };
@@ -79,7 +80,7 @@ program
           user: 'peephole_ro',
           region: 'eu-central-1',
           awsProfile: 'default',
-          securityGroupId: 'sg-0123456789abcdef0',
+          securityGroupId: 'sg-xxxxxxxxxxxxxxxxx',
           schemas: ['public'],
           maxRows: 500,
         },
@@ -94,14 +95,13 @@ program
   .description('Print the one-time role setup SQL (pipe into psql as the DB owner)')
   .option('--role <name>', 'name of the read-only role', 'peephole_ro')
   .option('--hide <cols...>', 'columns to hide, as table.column', [])
-  .option('--hide-file <path>', 'file with one table.column per line (# comments ok)')
+  .option('--hide-file <path>', 'file with one table.column per line (# comments ok; ! lines are ignored)')
   .action(async (opts: { role: string; hide: string[]; hideFile?: string }) => {
     if (!/^[a-z_][a-z0-9_]*$/.test(opts.role)) throw new Error('role must match ^[a-z_][a-z0-9_]*$');
-    const fromFile = opts.hideFile
-      ? (await fs.readFile(opts.hideFile, 'utf8')).split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean)
-      : [];
+    const fromFile = opts.hideFile ? parseHiddenList(await fs.readFile(opts.hideFile, 'utf8')) : [];
     const cols = [...new Set([...fromFile, ...opts.hide])].sort();
-    for (const c of cols) if (!/^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/.test(c)) throw new Error(`bad column "${c}" (want table.column)`);
+    // Prisma default names are camelCase/PascalCase; the SQL template quotes every identifier with %I.
+    for (const c of cols) if (!/^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/.test(c)) throw new Error(`bad column "${c}" (want table.column)`);
     const hidden = cols.length ? `ARRAY[\n    ${cols.map((c) => `'${c}'`).join(',\n    ')}\n  ]` : 'ARRAY[]::text[]';
     const sql = await fs.readFile(join(PKG_ROOT, 'sql', 'setup-role.sql'), 'utf8');
     process.stdout.write(sql.replace(/__ROLE__/g, opts.role).replace('__HIDDEN__', hidden));
@@ -220,6 +220,8 @@ program
     for (const c of checks) console.log(`${c.ok ? '✔' : '✖'} ${c.name.padEnd(16)} ${c.detail}`);
     if (checks.some((c) => !c.ok)) process.exit(1);
   });
+
+program.addCommand(hiddenCommand());
 
 program
   .command('mcp')

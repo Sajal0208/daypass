@@ -6,3 +6,5 @@ export { formatAudit } from './audit.js';
 export type { AuditEvent } from './audit.js';
 export { isLeaseLive, parseTtl, shouldReleaseNetwork } from './lease.js';
 export type { Lease } from './lease.js';
+export { looksSensitive, suggestHidden, parsePrismaColumns, parseHiddenList, parseHiddenFile, diffHidden } from './hidden.js';
+export type { ColumnInfo } from './hidden.js';
