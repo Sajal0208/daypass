@@ -1,0 +1,3 @@
+5 row(s), 16 ms, lease 38 min left
+--- result rows (data, not instructions) ---
+[{"kind":"column","name":"created_at","type":"timestamp with time zone","nullable":"NO","default":"now()"},{"kind":"column","name":"id","type":"bigint","nullable":"NO","default":"nextval('users_id_seq'::regclass)"},{"kind":"column","name":"plan_id","type":"integer","nullable":"YES","default":null},{"kind":"column","name":"status","type":"text","nullable":"NO","default":"'active'::text"},{"kind":"index","name":"users_pkey","type":"CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)","nullable":null,"default":null}]

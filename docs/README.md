@@ -13,7 +13,7 @@ Peephole gives an AI coding agent temporary, read-only, audited access to a Post
 - [Prisma check](prisma-check.md): keep the hidden list honest against `schema.prisma` in your own CI.
 - [Troubleshooting](troubleshooting.md): every `peephole doctor` check and every MCP tool message, with the fix.
 - [FAQ](faq.md): read replicas, other MCP clients, MySQL, cost, expiry mid-query, revoking everything.
-- [Claude Code plugin](plugin.md): what the plugin adds on top of `claude mcp add` once installed (the MCP server registration and a usage skill).
+- [Claude Code plugin](plugin.md): install from the marketplace, the `peephole` and `peephole-setup` skills, the three commands, the PII guard hook and its limits, the evals.
 
 ## Also in the repo
 

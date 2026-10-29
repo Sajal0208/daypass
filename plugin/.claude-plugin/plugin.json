@@ -1,0 +1,9 @@
+{
+  "name": "peephole",
+  "version": "0.1.0",
+  "description": "Temporary, read-only, audited production-database access for Claude Code: lease-aware skills, setup walkthrough, PII guard hook.",
+  "author": { "name": "Vocobase", "email": "developers@vocobase.com" },
+  "homepage": "https://github.com/Sajal0208/peephole",
+  "license": "MIT",
+  "keywords": ["postgres", "mcp", "read-only", "audit", "database"]
+}

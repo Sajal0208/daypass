@@ -9,6 +9,10 @@ export interface ColumnInfo {
   type?: string;
 }
 
+// The name heuristic below (WORDS, SPECIAL, ALWAYS, SAFE_TAIL, toSnake, looksSensitive) is
+// mirrored verbatim in plugin/hooks/pii-guard.mjs, which runs dependency-free and cannot import
+// this module. Change both files together: the parity test in test/plugin-hook.test.ts guards drift.
+
 /** Words that mark a column as personal or secret data. Matched on snake_case / camelCase parts. */
 const WORDS = new Set([
   'phone', 'mobile', 'email', 'token', 'secret', 'key', 'transcript', 'password', 'passwd',
