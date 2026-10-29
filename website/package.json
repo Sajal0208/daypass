@@ -1,0 +1,33 @@
+{
+  "name": "peephole-website",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "peephole.dev: the website and docs for the peephole-db package (Astro + Starlight).",
+  "scripts": {
+    "sync-docs": "node scripts/sync-docs.mjs",
+    "predev": "npm run sync-docs",
+    "dev": "astro dev",
+    "start": "astro dev",
+    "prebuild": "npm run sync-docs",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "astro": "astro"
+  },
+  "engines": {
+    "node": ">=22.23.4"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.7",
+    "@astrojs/starlight-tailwind": "5.0.0",
+    "@tailwindcss/vite": "4.3.3",
+    "astro": "7.4.4",
+    "sharp": "0.35.5",
+    "tailwindcss": "4.3.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.12",
+    "typescript": "5.9.3"
+  }
+}
