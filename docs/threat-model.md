@@ -30,7 +30,7 @@ Peephole puts a wall between an AI coding agent and a production database. This 
 
 ## What "the role is the wall" means for you
 
-Every client-side layer (lease, guard, caps) runs in a Node process on the developer's laptop. A developer can edit `lease.json`, run `peephole mcp` with a patched build, or connect with `psql` as `peephole_ro` directly. None of that gets them past the role: still read-only, still no hidden columns, still 10 s. The client layers exist to make the agent's life predictable and cheap, and to produce the audit line. If you find a way for `peephole_ro` to read a hidden column or write anything, that is the critical bug; report it as described in [../SECURITY.md](../SECURITY.md).
+Every client-side layer (lease, guard, caps) runs in a Node process on the developer's laptop. A developer can edit `lease.json`, run `peephole mcp` with a patched build, or connect with `psql` as `peephole_ro` directly. None of that gets them past the role: still read-only, still no hidden columns, still 10 s. The client layers exist to make the agent's life predictable and cheap, and to produce the audit line. If you find a way for `peephole_ro` to read a hidden column or write anything, that is the critical bug; report it as described in the [security policy](../SECURITY.md).
 
 The flip side: if the role setup was not applied, or was applied with a mistake, the client layers are all you have. `peephole doctor` checks the two things that matter most (`read-only`, `write blocked`); the self-check at the end of the setup SQL covers the hidden columns.
 

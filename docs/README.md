@@ -1,6 +1,6 @@
 # Peephole docs
 
-Peephole gives an AI coding agent temporary, read-only, audited access to a Postgres database. A human opens a lease from the terminal; for that time Claude Code (or any MCP client) can run `SELECT`s through a small set of tools; then the door shuts on its own. These guides cover setup, the safety layers, and what to do when something fails. The package README is at [../README.md](../README.md).
+Peephole gives an AI coding agent temporary, read-only, audited access to a Postgres database. A human opens a lease from the terminal; for that time Claude Code (or any MCP client) can run `SELECT`s through a small set of tools; then the door shuts on its own. These guides cover setup, the safety layers, and what to do when something fails. The [package README](../README.md) covers installation, the one-time database setup and the MCP tools.
 
 ## Guides
 

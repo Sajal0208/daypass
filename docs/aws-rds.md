@@ -106,7 +106,7 @@ The rule is IPv4 only. If your public address changes during a lease (new Wi-Fi,
 
 Expired rules can be left behind when a laptop goes to sleep or the AWS call fails. `peephole sweep prod` lists the group's rules and removes every `peephole:*` rule whose `until` timestamp is in the past. It also clears an expired local lease file. Run it every 15 minutes from a machine that has the same AWS permissions. Cron does not load your shell profile, so use the full path from `which peephole` and make sure the AWS profile is reachable:
 
-```cron
+```text
 */15 * * * * /usr/local/bin/peephole sweep prod >> "$HOME/.peephole/sweep.log" 2>&1
 ```
 
