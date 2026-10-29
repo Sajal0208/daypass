@@ -4,13 +4,10 @@ import InstallSnippet from '../components/InstallSnippet.astro';
 import FlowDiagram from '../components/FlowDiagram.astro';
 import LayerTable from '../components/LayerTable.astro';
 import TerminalDemo from '../components/TerminalDemo.astro';
-
-const REPO = 'https://github.com/Sajal0208/peephole';
-const description =
-	'Peephole gives AI coding agents temporary, read-only, audited access to a production Postgres. A human opens a lease; Claude Code (or any MCP client) gets SELECT-only tools until it expires.';
+import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 ---
 
-<Landing title="Peephole" description={description}>
+<Landing title={siteTitle} description={siteDescription}>
 	<section class="hero">
 		<div class="land-wrap">
 			<h1>Temporary, read-only, audited database access for AI coding agents.</h1>
@@ -20,7 +17,7 @@ const description =
 			</p>
 			<div class="actions">
 				<a class="land-btn land-btn-primary" href="/docs/quickstart/">Quickstart</a>
-				<a class="land-btn land-btn-secondary" href={REPO}>GitHub</a>
+				<a class="land-btn land-btn-secondary" href={repoUrl}>GitHub</a>
 			</div>
 			<InstallSnippet command="npm install -g peephole-db" />
 		</div>

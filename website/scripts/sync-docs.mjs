@@ -10,7 +10,8 @@
  *   ../SUPPORT.md            -> src/content/docs/support.md         (/support/)
  *   ../docs/assets/*         -> public/assets/*                     (/assets/<file>)
  *
- * Only the top level of docs/ is copied (not plans/, launch/, assets/ or any other subfolder).
+ * Only the top level of docs/ is copied (not plans/, launch/, assets/ or any other subfolder), and
+ * only regular files from docs/assets/ (no symlinks, no subfolders).
  *
  * For each file the first `# H1` becomes the frontmatter `title` (and is removed from the body),
  * the first paragraph after it becomes `description` (and stays in the body), and relative links
@@ -25,7 +26,7 @@
  * No dependencies: Node 20+ built-ins only.
  */
 import { existsSync } from 'node:fs';
-import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -110,7 +111,10 @@ function rewriteTarget(target, sourceRepoPath) {
 	};
 	const folderRelative = toRepoPath(path.posix.join(path.posix.dirname(sourceRepoPath), file));
 	const rootRelative = toRepoPath(file);
-	if (folderRelative === null) return target; // escapes the repo: leave it alone
+	if (folderRelative === null) {
+		log(`notice: ${sourceRepoPath} links to ${target}, which resolves outside the repo; left as written`);
+		return target;
+	}
 
 	// Prefer the file that actually exists: authors sometimes write repo-root-relative paths
 	// (e.g. `docs/foo.md` from inside docs/). Fall back to the folder-relative reading.
@@ -311,9 +315,39 @@ async function syncAssets() {
 		log('notice: docs/assets/ not found; no assets copied');
 		return;
 	}
-	await cp(src, assetsOutDir, { recursive: true });
-	const n = (await readdir(assetsOutDir)).length;
+	await mkdir(assetsOutDir, { recursive: true });
+	// Regular files only: a symlink could point anywhere on the build machine, and subfolders are
+	// not part of the published layout.
+	let n = 0;
+	for (const entry of await readdir(src, { withFileTypes: true })) {
+		if (entry.isFile()) {
+			await copyFile(path.join(src, entry.name), path.join(assetsOutDir, entry.name));
+			n++;
+		} else {
+			const kind = entry.isSymbolicLink() ? 'a symlink' : entry.isDirectory() ? 'a directory' : 'not a regular file';
+			log(`notice: docs/assets/${entry.name} is ${kind}; skipped`);
+		}
+	}
 	log(`copied ${n} asset(s) to public/assets/`);
+}
+
+/**
+ * The landing page embeds src/components/demo-output.txt as the text alternative to the demo
+ * GIF; it is a copy of docs/assets/demo-output.txt. Shout when the two drift apart (the
+ * recording is re-made in the repo, the copy here is updated by hand).
+ */
+async function checkDemoTranscript() {
+	const source = path.join(repoRoot, 'docs', 'assets', 'demo-output.txt');
+	const copy = path.join(websiteDir, 'src', 'components', 'demo-output.txt');
+	if (!(await exists(source))) return;
+	if (!(await exists(copy)) || (await readFile(source, 'utf8')) !== (await readFile(copy, 'utf8'))) {
+		const banner = '!'.repeat(72);
+		log(banner);
+		log('NOTICE: docs/assets/demo-output.txt differs from src/components/demo-output.txt.');
+		log('The landing page shows the stale copy as the text alternative to the demo GIF.');
+		log(`Fix: cp ${path.relative(websiteDir, source)} ${path.relative(websiteDir, copy)}`);
+		log(banner);
+	}
 }
 
 log(`source: ${repoRoot}`);
@@ -321,3 +355,4 @@ await mkdir(contentDir, { recursive: true });
 await syncGuides();
 await syncRootPages();
 await syncAssets();
+await checkDemoTranscript();

@@ -25,6 +25,13 @@ on:
       - SUPPORT.md
       - .github/workflows/site.yml
 
+permissions:
+  contents: read
+
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   site:
     name: build + Lighthouse CI + link check
@@ -41,8 +48,18 @@ jobs:
           cache-dependency-path: website/package-lock.json
       - run: npm ci
       - run: npm run build
+      # Reports are written to disk (not Lighthouse's temporary public storage) and kept as a
+      # workflow artifact, so a failed assertion can be inspected after the run.
       - name: Lighthouse CI
-        run: npm run lhci
+        run: npm run lhci -- --upload.target=filesystem --upload.outputDir=.lighthouseci/reports
+      - name: Upload Lighthouse reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-reports
+          path: website/.lighthouseci/reports
+          retention-days: 14
+          if-no-files-found: ignore
       # Canonical and og:url tags point at the site origin (PUBLIC_SITE_URL, a placeholder
       # until a domain is live), so that host is skipped along with rate-limited externals.
       - name: Link check

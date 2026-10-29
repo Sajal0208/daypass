@@ -1,14 +1,14 @@
 ---
 import ThemeToggle from './ThemeToggle.astro';
+import { repoUrl } from '../lib/meta.ts';
 
-const REPO = 'https://github.com/Sajal0208/peephole';
 const NPM = 'https://www.npmjs.com/package/peephole-db';
 const links = [
 	{ href: '/docs/', label: 'Docs' },
 	{ href: '/changelog/', label: 'Changelog' },
 	{ href: '/security/', label: 'Security' },
 	{ href: '/roadmap/', label: 'Roadmap' },
-	{ href: REPO, label: 'GitHub' },
+	{ href: repoUrl, label: 'GitHub' },
 	{ href: NPM, label: 'npm' },
 ];
 ---

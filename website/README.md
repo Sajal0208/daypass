@@ -10,7 +10,7 @@ and it is excluded from the published npm tarball.
 ```bash
 cd website
 npm install
-npm run dev        # http://localhost:4321
+npm run dev        # http://localhost:4321 (npm start is the same)
 npm run build      # static output in dist/
 npm run preview    # serve dist/ locally
 npm run check      # astro check (TypeScript + content schema)
@@ -37,8 +37,10 @@ Only the top level of `docs/` is synced; `docs/plans/` and other subfolders stay
 For each file the first `# Title` becomes the page title, the first paragraph becomes the meta
 description, and relative links (`quickstart.md`, `../SECURITY.md`, `assets/demo.gif`, …) are
 rewritten to site URLs. Links to files that have no page here (`../README.md`,
-`../CONTRIBUTING.md`, source files) go to GitHub. Each page's "Edit page" link points at its
-Markdown source in the repo.
+`../CONTRIBUTING.md`, source files) go to GitHub; a link that resolves outside the repo is left
+as written, with a notice. Only regular files are copied from `docs/assets/` (symlinks and
+subfolders are skipped with a notice). Each page's "Edit page" link points at its Markdown
+source in the repo.
 
 Missing sources are skipped with a notice, so the site builds on a checkout with no docs at
 all. The generated files are git-ignored; edit the source Markdown instead. The sidebar order
@@ -47,7 +49,7 @@ of guides is the `GUIDE_ORDER` list in the script; unknown guides follow alphabe
 `DOCS_SRC=<dir> npm run sync-docs` points the script at another directory laid out like the
 repo root (for testing the sync itself).
 
-The landing page (`/`) is `src/pages/index.astro`, a plain Astro page (not a Starlight route) that imports the same `global.css`; its components live in `src/components/`. The demo transcript it shows as the text alternative to `/assets/demo.gif` is `src/components/demo-output.txt`, a copy of `docs/assets/demo-output.txt`.
+The landing page (`/`) is `src/pages/index.astro`, a plain Astro page (not a Starlight route) that imports the same `global.css`; its components live in `src/components/`. The demo transcript it shows as the text alternative to `/assets/demo.gif` is `src/components/demo-output.txt`, a copy of `docs/assets/demo-output.txt`; the sync script prints a loud notice when the two differ.
 
 ## Open Graph image and icons
 
@@ -81,9 +83,12 @@ fails. Reports upload to Lighthouse's temporary public storage (a link is printe
 `-- --upload.target=filesystem --upload.outputDir=<dir>` to keep them local instead. The run
 needs Chrome and writes a git-ignored `.lighthouseci/` folder.
 
-`.github/workflows/site.yml` runs `npm ci`, `npm run build`, `npm run lhci` and a
-[linkinator](https://github.com/JustinBeckwith/linkinator) crawl of `dist/` on every pull
-request and push to `main` that touches `website/` or the synced Markdown. The link check skips
+`.github/workflows/site.yml` runs `npm ci`, `npm run build`, `npm run lhci` (with
+`--upload.target=filesystem --upload.outputDir=.lighthouseci/reports`; the reports are kept for
+14 days as the `lighthouse-reports` workflow artifact, so a failed assertion can be inspected
+after the run) and a [linkinator](https://github.com/JustinBeckwith/linkinator) crawl of `dist/`
+on every pull request and push to `main` that touches `website/` or the synced Markdown. The
+workflow has read-only `contents` permission and cancels a superseded run on the same ref. The link check skips
 `github.com`, `npmjs.com`, `plausible.io` and the site's own origin (the canonical and `og:url`
 tags point at `PUBLIC_SITE_URL`, which is a placeholder until a domain is live).
 

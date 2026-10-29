@@ -2,9 +2,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import tailwindcss from '@tailwindcss/vite';
-import { ogImage, siteDescription, siteUrl } from './src/lib/meta.ts';
-
-const REPO = 'https://github.com/Sajal0208/peephole';
+import { ogImage, repoUrl, siteDescription, siteUrl } from './src/lib/meta.ts';
 
 // Placeholder until a domain is chosen. Set PUBLIC_SITE_URL (e.g. in Vercel project settings)
 // to override it; it feeds canonical URLs, the sitemap, robots.txt and the Open Graph image URL.
@@ -44,7 +42,7 @@ export default defineConfig({
 		starlight({
 			title: 'Peephole',
 			description: siteDescription,
-			social: [{ icon: 'github', label: 'GitHub', href: REPO }],
+			social: [{ icon: 'github', label: 'GitHub', href: repoUrl }],
 			sidebar: [
 				// Pages under src/content/docs/docs/ are generated from ../docs by scripts/sync-docs.mjs.
 				{ label: 'Docs', items: [{ autogenerate: { directory: 'docs' } }] },
@@ -58,7 +56,7 @@ export default defineConfig({
 			lastUpdated: false,
 			// Pages committed in this directory (e.g. the splash page) edit here. Synced pages carry
 			// their own `editUrl` pointing at the Markdown source in the repo (docs/*.md etc).
-			editLink: { baseUrl: `${REPO}/edit/main/website/` },
+			editLink: { baseUrl: `${repoUrl}/edit/main/website/` },
 		}),
 	],
 	vite: {
