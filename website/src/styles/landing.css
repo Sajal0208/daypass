@@ -81,6 +81,9 @@
 	}
 	:not(pre) > code {
 		background: var(--sl-color-bg-inline-code);
+		/* Body text colour even inside muted paragraphs (.land-lead): gray-3 on the code
+		   background is 3.98:1 in dark mode, below the 4.5:1 Lighthouse asks for. */
+		color: var(--sl-color-text);
 		padding: 0.1em 0.35em;
 		border-radius: 0.3rem;
 		overflow-wrap: anywhere;
