@@ -1,0 +1,89 @@
+---
+import ThemeToggle from './ThemeToggle.astro';
+
+const REPO = 'https://github.com/Sajal0208/peephole';
+const NPM = 'https://www.npmjs.com/package/peephole-db';
+const links = [
+	{ href: '/docs/', label: 'Docs' },
+	{ href: '/changelog/', label: 'Changelog' },
+	{ href: '/security/', label: 'Security' },
+	{ href: '/roadmap/', label: 'Roadmap' },
+	{ href: REPO, label: 'GitHub' },
+	{ href: NPM, label: 'npm' },
+];
+---
+
+<header class="site-header">
+	<div class="land-wrap bar">
+		<a class="wordmark" href="/" aria-label="Peephole home">
+			<img src="/favicon.svg" width="22" height="22" alt="" />
+			<span>peephole</span>
+		</a>
+		<nav aria-label="Site">
+			<ul>
+				{links.map((l) => <li><a href={l.href}>{l.label}</a></li>)}
+			</ul>
+		</nav>
+		<ThemeToggle />
+	</div>
+</header>
+
+<style>
+	.site-header {
+		border-bottom: 1px solid var(--sl-color-hairline);
+		background: var(--sl-color-bg);
+	}
+	.bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem 1rem;
+		min-height: 3.5rem;
+		padding-block: 0.6rem;
+	}
+	.wordmark {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-family: var(--font-mono);
+		font-weight: 600;
+		font-size: 1.05rem;
+		color: var(--sl-color-white);
+		margin-right: auto;
+	}
+	.wordmark img {
+		border-radius: 5px;
+	}
+	.wordmark:hover {
+		text-decoration: none;
+	}
+	nav {
+		order: 3;
+		flex-basis: 100%;
+	}
+	nav ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem 1rem;
+		font-size: 0.875rem;
+	}
+	nav a {
+		color: var(--sl-color-gray-2);
+	}
+	nav a:hover {
+		color: var(--sl-color-white);
+	}
+	@media (min-width: 50em) {
+		nav {
+			order: 0;
+			flex-basis: auto;
+		}
+		nav ul {
+			gap: 1.25rem;
+			font-size: 0.9rem;
+		}
+	}
+</style>

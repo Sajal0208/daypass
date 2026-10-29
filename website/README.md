@@ -47,7 +47,7 @@ of guides is the `GUIDE_ORDER` list in the script; unknown guides follow alphabe
 `DOCS_SRC=<dir> npm run sync-docs` points the script at another directory laid out like the
 repo root (for testing the sync itself).
 
-`src/content/docs/index.mdx` is the landing page and is committed.
+The landing page (`/`) is `src/pages/index.astro`, a plain Astro page (not a Starlight route) that imports the same `global.css`; its components live in `src/components/`. The demo transcript it shows as the text alternative to `/assets/demo.gif` is `src/components/demo-output.txt`, a copy of `docs/assets/demo-output.txt`.
 
 ## Environment variables
 

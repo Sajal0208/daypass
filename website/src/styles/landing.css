@@ -1,0 +1,196 @@
+/*
+ * Styles for the landing page (src/pages/index.astro), which uses a plain layout instead of
+ * Starlight's. global.css (imported by the layout) brings Tailwind's theme, the teal accent and
+ * the Starlight palette variables (--sl-color-gray-*, --sl-color-accent*) that the
+ * @astrojs/starlight-tailwind plugin defines on :root for both themes. Starlight's own base
+ * stylesheet (which derives --sl-color-text, --sl-color-bg, ... from that palette) only loads on
+ * Starlight routes, so the few derived tokens this page needs are mapped here, the same way.
+ */
+@layer base {
+	:root {
+		--sl-color-text: var(--sl-color-gray-2);
+		--sl-color-text-accent: var(--sl-color-accent-high);
+		--sl-color-bg: var(--sl-color-black);
+		--sl-color-bg-nav: var(--sl-color-gray-6);
+		--sl-color-bg-inline-code: var(--sl-color-gray-5);
+		--sl-color-hairline-light: var(--sl-color-gray-5);
+		--sl-color-hairline: var(--sl-color-gray-6);
+		/* Primary button: light text on teal-700 (light) / dark text on teal-200 (dark), both ≥ 4.5:1. */
+		--land-btn-bg: var(--color-accent-200);
+		--land-btn-fg: var(--color-zinc-900);
+		--land-btn-bg-hover: var(--color-accent-100);
+		--land-muted: var(--sl-color-gray-3);
+	}
+	:root[data-theme='light'] {
+		--sl-color-text-accent: var(--sl-color-accent);
+		--sl-color-bg-nav: var(--sl-color-gray-7);
+		--sl-color-bg-inline-code: var(--sl-color-gray-6);
+		--sl-color-hairline-light: var(--sl-color-gray-6);
+		--land-btn-bg: var(--color-accent-700);
+		--land-btn-fg: #fff;
+		--land-btn-bg-hover: var(--color-accent-800);
+	}
+
+	html {
+		color-scheme: dark;
+		scroll-behavior: smooth;
+	}
+	html[data-theme='light'] {
+		color-scheme: light;
+	}
+	*,
+	*::before,
+	*::after {
+		box-sizing: border-box;
+	}
+	body {
+		margin: 0;
+		font-family: var(--font-sans);
+		font-size: 1rem;
+		line-height: 1.65;
+		color: var(--sl-color-text);
+		background: var(--sl-color-bg);
+		-webkit-font-smoothing: antialiased;
+		overflow-x: hidden;
+	}
+	h1,
+	h2,
+	h3 {
+		margin: 0;
+		color: var(--sl-color-white);
+		line-height: 1.2;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+		overflow-wrap: anywhere;
+	}
+	p {
+		margin: 0;
+	}
+	a {
+		color: var(--sl-color-text-accent);
+		text-decoration: none;
+	}
+	a:hover {
+		text-decoration: underline;
+	}
+	code,
+	pre,
+	kbd {
+		font-family: var(--font-mono);
+		font-size: 0.9em;
+	}
+	:not(pre) > code {
+		background: var(--sl-color-bg-inline-code);
+		padding: 0.1em 0.35em;
+		border-radius: 0.3rem;
+		overflow-wrap: anywhere;
+	}
+	pre {
+		margin: 0;
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+	}
+	:focus-visible {
+		outline: 2px solid var(--sl-color-accent);
+		outline-offset: 2px;
+	}
+	button {
+		font: inherit;
+		color: inherit;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		html {
+			scroll-behavior: auto;
+		}
+	}
+}
+
+@layer components {
+	.land-wrap {
+		width: 100%;
+		max-width: 64rem;
+		margin-inline: auto;
+		padding-inline: 1rem;
+	}
+	.land-section {
+		padding-block: 3rem;
+		border-top: 1px solid var(--sl-color-hairline);
+	}
+	.land-section > .land-wrap > h2 {
+		font-size: 1.5rem;
+		margin-bottom: 0.5rem;
+	}
+	.land-lead {
+		max-width: 44rem;
+		color: var(--land-muted);
+		margin-bottom: 1.5rem;
+	}
+	.land-prose {
+		max-width: 44rem;
+	}
+	.land-prose > * + * {
+		margin-top: 1rem;
+	}
+	.land-prose ul {
+		padding-left: 1.25rem;
+	}
+	.land-prose li + li {
+		margin-top: 0.5rem;
+	}
+	.land-prose li strong {
+		color: var(--sl-color-white);
+		font-weight: 600;
+	}
+	.land-code {
+		border: 1px solid var(--sl-color-hairline-light);
+		border-radius: 0.5rem;
+		background: var(--sl-color-bg-nav);
+		padding: 0.85rem 1rem;
+		font-size: 0.875rem;
+		line-height: 1.6;
+		color: var(--sl-color-white);
+	}
+	.land-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.6rem 1.1rem;
+		border-radius: 0.5rem;
+		border: 1px solid transparent;
+		font-weight: 600;
+		font-size: 0.95rem;
+		line-height: 1.2;
+		cursor: pointer;
+		text-decoration: none;
+	}
+	.land-btn:hover {
+		text-decoration: none;
+	}
+	.land-btn-primary {
+		background: var(--land-btn-bg);
+		color: var(--land-btn-fg);
+	}
+	.land-btn-primary:hover {
+		background: var(--land-btn-bg-hover);
+	}
+	.land-btn-secondary {
+		border-color: var(--sl-color-gray-5);
+		color: var(--sl-color-white);
+		background: transparent;
+	}
+	.land-btn-secondary:hover {
+		border-color: var(--sl-color-gray-3);
+		background: var(--sl-color-bg-nav);
+	}
+	@media (min-width: 50em) {
+		.land-wrap {
+			padding-inline: 1.5rem;
+		}
+		.land-section {
+			padding-block: 4rem;
+		}
+		.land-section > .land-wrap > h2 {
+			font-size: 1.75rem;
+		}
+	}
+}

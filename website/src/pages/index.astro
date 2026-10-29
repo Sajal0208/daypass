@@ -1,0 +1,131 @@
+---
+import Landing from '../layouts/Landing.astro';
+import InstallSnippet from '../components/InstallSnippet.astro';
+import FlowDiagram from '../components/FlowDiagram.astro';
+import LayerTable from '../components/LayerTable.astro';
+import TerminalDemo from '../components/TerminalDemo.astro';
+
+const REPO = 'https://github.com/Sajal0208/peephole';
+const description =
+	'Peephole gives AI coding agents temporary, read-only, audited access to a production Postgres. A human opens a lease; Claude Code (or any MCP client) gets SELECT-only tools until it expires.';
+---
+
+<Landing title="Peephole" description={description}>
+	<section class="hero">
+		<div class="land-wrap">
+			<h1>Temporary, read-only, audited database access for AI coding agents.</h1>
+			<p class="tagline">
+				No password ever goes into the chat, the agent cannot write, and every query is logged
+				with who, why, what, how many rows and how long.
+			</p>
+			<div class="actions">
+				<a class="land-btn land-btn-primary" href="/docs/quickstart/">Quickstart</a>
+				<a class="land-btn land-btn-secondary" href={REPO}>GitHub</a>
+			</div>
+			<InstallSnippet command="npm install -g peephole-db" />
+		</div>
+	</section>
+
+	<section class="land-section" aria-labelledby="how">
+		<div class="land-wrap">
+			<h2 id="how">How it works</h2>
+			<p class="land-lead">
+				You open a lease: <code>peephole open prod --ttl 45m --reason "..."</code>. For that
+				time the agent can run <code>SELECT</code>s on your Postgres through five MCP tools.
+				Then the door shuts on its own.
+			</p>
+			<FlowDiagram />
+		</div>
+	</section>
+
+	<section class="land-section" aria-labelledby="safe">
+		<div class="land-wrap">
+			<h2 id="safe">Why it is safe</h2>
+			<LayerTable />
+		</div>
+	</section>
+
+	<section class="land-section" aria-labelledby="demo">
+		<div class="land-wrap">
+			<h2 id="demo">In the terminal</h2>
+			<p class="land-lead">
+				Open a lease, run <code>peephole doctor</code>, then three queries: one works, <code>SELECT *</code> on a table with hidden columns is refused by Postgres, and an <code>UPDATE</code> never reaches it. <code>peephole log</code> shows all three.
+			</p>
+			<TerminalDemo />
+		</div>
+	</section>
+
+	<section class="land-section" aria-labelledby="why-not">
+		<div class="land-wrap">
+			<h2 id="why-not">Why not just give the agent the DB URL?</h2>
+			<div class="land-prose">
+			<ul>
+				<li>
+					<strong>The password lands in context and config forever.</strong> It sits in <code>.mcp.json</code>, in the chat transcript, in whatever the client logs. Rotating
+					it later means finding every copy.
+				</li>
+				<li>
+					<strong>Nothing expires.</strong> Access granted for one debugging session is still
+					there next month.
+				</li>
+				<li>
+					<strong>Writes are possible.</strong> A URL to the application user can <code>UPDATE</code>, <code>DELETE</code> and <code>DROP</code>. One wrong tool call, or
+					one row of injected text that reads like an instruction, is enough.
+				</li>
+				<li>
+					<strong>PII flows into the model.</strong> <code>SELECT * FROM users</code> ships
+					every email, phone and token to the model provider, and into the transcript.
+				</li>
+				<li>
+					<strong>Nobody can say afterwards what was read.</strong> No log ties a query to a
+					person and a reason.
+				</li>
+			</ul>
+			<p>Peephole replaces the URL with a lease, a role, a parser and an audit line.</p>
+			</div>
+		</div>
+	</section>
+
+	<section class="land-section" aria-labelledby="plugin">
+		<div class="land-wrap">
+			<h2 id="plugin">Claude Code plugin</h2>
+			<div class="land-prose">
+			<p>
+				The plugin bundles the MCP server, so you skip <code>claude mcp add</code>. Two commands
+				inside Claude Code, and the tools are there the next time a lease is open. Any other MCP
+				client works too: the command is <code>peephole mcp</code> over stdio.
+			</p>
+			<pre class="land-code"><code>/plugin marketplace add Sajal0208/peephole
+/plugin install peephole@peephole</code></pre>
+			<p><a href="/docs/plugin/">What the plugin adds on top of the bare MCP server</a></p>
+			</div>
+		</div>
+	</section>
+</Landing>
+
+<style>
+	.hero {
+		padding-block: 3.5rem 3rem;
+	}
+	.hero h1 {
+		font-size: clamp(1.9rem, 1.2rem + 3.2vw, 3rem);
+		max-width: 20ch;
+	}
+	.tagline {
+		margin-top: 1.25rem;
+		max-width: 40rem;
+		font-size: 1.1rem;
+		color: var(--land-muted);
+	}
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		margin-block: 1.75rem 1.25rem;
+	}
+	@media (min-width: 50em) {
+		.hero {
+			padding-block: 5.5rem 4.5rem;
+		}
+	}
+</style>

@@ -1,0 +1,40 @@
+---
+const REPO = 'https://github.com/Sajal0208/peephole';
+const NPM = 'https://www.npmjs.com/package/peephole-db';
+---
+
+<footer class="site-footer">
+	<div class="land-wrap row">
+		<span>MIT</span>
+		<span aria-hidden="true">·</span>
+		<a href="https://vocobase.com">Vocobase</a>
+		<span aria-hidden="true">·</span>
+		<a href={REPO}>GitHub</a>
+		<span aria-hidden="true">·</span>
+		<a href={NPM}>npm</a>
+		<span aria-hidden="true">·</span>
+		<a href="/security/">Security</a>
+		<span aria-hidden="true">·</span>
+		<a href="/roadmap/">Roadmap</a>
+	</div>
+</footer>
+
+<style>
+	.site-footer {
+		border-top: 1px solid var(--sl-color-hairline);
+		padding-block: 2rem;
+		font-size: 0.875rem;
+		color: var(--land-muted);
+	}
+	.row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem 0.6rem;
+	}
+	.row a {
+		color: var(--sl-color-gray-2);
+	}
+	.row a:hover {
+		color: var(--sl-color-white);
+	}
+</style>
