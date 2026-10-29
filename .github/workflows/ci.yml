@@ -21,6 +21,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - run: node --check plugin/hooks/pii-guard.mjs
+      - run: node -e "JSON.parse(require('fs').readFileSync('plugin/hooks/hooks.json','utf8')); JSON.parse(require('fs').readFileSync('plugin/.claude-plugin/plugin.json','utf8')); JSON.parse(require('fs').readFileSync('.claude-plugin/marketplace.json','utf8'))"
 
   integration:
     name: role SQL + doctor + MCP against real Postgres
