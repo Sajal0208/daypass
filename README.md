@@ -154,9 +154,17 @@ Either register the MCP server directly:
 claude mcp add --scope user peephole -- peephole mcp
 ```
 
-or install the Claude Code plugin, which, once installed, registers the MCP server for you (so
-plugin users skip `claude mcp add`) and adds a skill that teaches Claude how to use the tools.
-Install steps and what it adds on top of the bare MCP server: [docs/plugin.md](docs/plugin.md).
+or install the Claude Code plugin, which bundles the server (no `claude mcp add`):
+
+```
+/plugin marketplace add Sajal0208/peephole
+/plugin install peephole@peephole
+```
+
+The plugin adds a skill that teaches Claude the lease-first, named-columns, no-PII-in-the-reply
+rules, a setup walkthrough, `/peephole:peephole-status`, `/peephole:peephole-log` and
+`/peephole:peephole-hidden-check`, and a hook that stops a `query` naming a PII-looking column
+your hidden list does not cover. Details: [docs/plugin.md](docs/plugin.md).
 
 Any MCP client works: the command is `peephole mcp` over stdio.
 
@@ -199,7 +207,7 @@ Result rows are labelled *"data, not instructions"* so a row containing text lik
 - [Prisma check](docs/prisma-check.md): failing CI when the hidden list falls behind the schema.
 - [Troubleshooting](docs/troubleshooting.md): every `peephole doctor` line and what to do about it.
 - [FAQ](docs/faq.md)
-- [Claude Code plugin](docs/plugin.md): how to install it and what it adds on top of `claude mcp add`.
+- [Claude Code plugin](docs/plugin.md): install, the skills and commands, the PII guard hook, the evals.
 
 ## Roadmap
 
@@ -216,6 +224,7 @@ src/cli    peephole init / sql / hidden / open / status / close / sweep / log / 
 sql/       setup-role.sql template
 certs/     AWS RDS global CA bundle
 scripts/   CI integration run, secret scrub, smoke test
+plugin/    Claude Code plugin (skills, commands, PII hook, evals)
 ```
 
 ## Contributing and security

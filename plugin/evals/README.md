@@ -35,19 +35,20 @@ claude plugin eval ./plugin \
   --trust-plugin --scaffold --no-publish \
   --json plugin/evals/last.json \
   --threshold 0.8 \
-  --model claude-sonnet-5 --judge-model claude-haiku-4-5 \
+  --model <model> --judge-model <judge-model> \
   --max-cost-usd 10
 ```
 
 Exit 0 only when every case scores at or above `--threshold`; 1 when a case is below it
 or a run hit an API error; 2 when the cost ceiling stopped the run early
-(`partial: true` in the JSON). Pin both models so a model rollout is not read as a plugin
-regression. The runner needs a Claude Code install and credentials
+(`partial: true` in the JSON). Pin both models to ids your account has, so a model rollout
+is not read as a plugin regression; the ids and the defaults are in the Claude Code eval
+docs linked above. The runner needs a Claude Code install and credentials
 (`ANTHROPIC_API_KEY` or your provider's variables).
 
 **Cost.** Every run and every `llm` grader is a real model call on the account that runs
-the command. Measured on 2026-10-29 with the default models (agent `claude-opus-5-5`,
-judge haiku): a full default run (3 cases × 3 runs × 2 arms, plus three judge votes per
+the command. Measured on 2026-10-29 with the runner's default agent and judge models: a
+full default run (3 cases × 3 runs × 2 arms, plus three judge votes per
 `llm` grader per run) cost about $1.50 and took under 3 minutes with `-j 2`;
 `--runs 1 --ablation none` cost about $0.35. The exact figure is in `costUsd` of the JSON
 and in the summary table. The `hidden-column` agent mock adds a judge call only when

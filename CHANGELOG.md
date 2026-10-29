@@ -13,6 +13,8 @@ First release.
 - `sql/setup-role.sql` sets `PASSWORD NULL` only when it creates the role; re-runs keep a password set on a non-RDS database.
 - A guard-refused `explain` call is written to `audit.jsonl` (`allowed: false`, `blockedReason`), the same as a refused `query`.
 - MCP tools: `peephole_status`, `list_tables`, `describe_table`, `explain`, `query`
+- Claude Code plugin (`plugin/`): bundles the MCP server; `peephole` skill (lease first, named columns, no PII in the reply, sign-off with the lease), `peephole-setup` skill, `/peephole:peephole-status`, `/peephole:peephole-log [N]`, `/peephole:peephole-hidden-check <target>`, a `PreToolUse` PII guard hook on `query` that blocks a sensitive-looking column the hidden list does not cover (`PEEPHOLE_HIDDEN_FILE`, `PEEPHOLE_PII_HOOK=off`), and a mocked eval suite for `claude plugin eval` (no lease, simple question, hidden column). Guide: `docs/plugin.md`.
+- Marketplace catalog (`.claude-plugin/marketplace.json`): `/plugin marketplace add Sajal0208/peephole`, then `/plugin install peephole@peephole`.
 - Postgres only. Auth: AWS RDS IAM tokens (no stored password) or a connection URL / password for any other Postgres.
 - Guard: real Postgres parser (`libpg-query`); one statement; `SELECT`/`EXPLAIN` only; blocks row locks, `SELECT INTO`, `EXPLAIN ANALYZE` and 30+ dangerous functions.
 - Limits: 500 rows, 2 KB per cell, 1 MB per result, 10 s statement timeout, read-only session.
