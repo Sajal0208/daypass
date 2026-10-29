@@ -1,0 +1,57 @@
+---
+interface Props {
+	command: string;
+}
+const { command } = Astro.props;
+---
+
+<div class="install">
+	<pre class="land-code"><code>{command}</code></pre>
+	<button type="button" class="copy" data-copy={command} aria-label={`Copy "${command}"`}>Copy</button>
+</div>
+
+<style>
+	.install {
+		display: flex;
+		align-items: stretch;
+		gap: 0.5rem;
+		max-width: 28rem;
+	}
+	.install pre {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: center;
+	}
+	.copy {
+		flex: none;
+		padding: 0 0.85rem;
+		border-radius: 0.5rem;
+		border: 1px solid var(--sl-color-gray-5);
+		background: transparent;
+		color: var(--sl-color-white);
+		font-size: 0.85rem;
+		cursor: pointer;
+	}
+	.copy:hover {
+		background: var(--sl-color-bg-nav);
+	}
+</style>
+
+<script>
+	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+		button.addEventListener('click', async () => {
+			const text = button.dataset.copy ?? '';
+			let ok = false;
+			try {
+				await navigator.clipboard.writeText(text);
+				ok = true;
+			} catch {
+				ok = false;
+			}
+			const idle = button.textContent;
+			button.textContent = ok ? 'Copied' : 'Select and copy';
+			setTimeout(() => (button.textContent = idle), 1600);
+		});
+	}
+</script>

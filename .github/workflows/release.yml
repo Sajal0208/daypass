@@ -1,0 +1,45 @@
+name: Release
+
+# Publishes to npm with provenance and writes the GitHub release notes for a vX.Y.Z tag.
+#
+# Normally the tag comes from merging the release-please PR (.github/workflows/release-please.yml),
+# which then dispatches this workflow on the tag. A hand-pushed tag works the same way:
+#   git tag v0.1.0 && git push --tags
+# Needs an npm granular access token with publish rights in the NPM_TOKEN repo secret.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: # run with the tag as the ref; release-please does this after tagging
+
+permissions:
+  contents: write
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: Check the ref is a tag that matches package.json version
+        run: |
+          [ "${GITHUB_REF_TYPE}" = tag ] || { echo "ref ${GITHUB_REF} is not a tag; run this on a vX.Y.Z tag"; exit 1; }
+          v="v$(node -p "require('./package.json').version")"
+          [ "$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != package version $v"; exit 1; }
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # release-please has usually created this release already, with the CHANGELOG section
+      # as its body. append_body keeps that and adds GitHub's generated notes below it.
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          append_body: true

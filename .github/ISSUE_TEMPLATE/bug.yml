@@ -1,0 +1,32 @@
+name: Bug
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If this is a **security problem** (an agent could read a hidden column, write, or bypass a lease), do **not** file it here. See SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: peephole-db version
+      placeholder: peephole --version
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Node version, OS, Postgres version, RDS or plain
+      placeholder: node 22.4, macOS 15, Postgres 16 on RDS
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands, the SQL you sent, and the `peephole doctor` output. Redact hostnames if you like.
+      render: shell

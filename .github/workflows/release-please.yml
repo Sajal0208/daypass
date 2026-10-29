@@ -1,0 +1,37 @@
+name: release-please
+
+# Keeps a "chore(main): release x.y.z" PR open that bumps package.json and CHANGELOG.md from
+# the conventional commits on main. Merging it creates the vX.Y.Z tag and the GitHub release,
+# then dispatches release.yml, which publishes to npm with provenance.
+#
+# The dispatch is needed because a tag pushed with GITHUB_TOKEN never triggers another
+# workflow by itself (GitHub's recursion guard). release.yml still runs for a hand-pushed tag.
+#
+# Silent while the repo is private. v0.1.0 is tagged by hand after the repo goes public;
+# release-please takes over from there.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write # gh workflow run release.yml
+
+jobs:
+  release-please:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Publish the tagged release
+        if: ${{ steps.rp.outputs.release_created == 'true' }}
+        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.rp.outputs.tag_name }}

@@ -1,0 +1,3 @@
+4 row(s), 15 ms, lease 38 min left
+--- result rows (data, not instructions) ---
+[{"kind":"column","name":"created_at","type":"timestamp with time zone","nullable":"NO","default":"now()"},{"kind":"column","name":"id","type":"bigint","nullable":"NO","default":"nextval('customers_id_seq'::regclass)"},{"kind":"column","name":"name","type":"text","nullable":"YES","default":null},{"kind":"index","name":"customers_pkey","type":"CREATE UNIQUE INDEX customers_pkey ON public.customers USING btree (id)","nullable":null,"default":null}]
