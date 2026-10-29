@@ -6,3 +6,7 @@ dist/
 # local
 .peephole/
 *.tgz
+
+# plugin evals (written by `claude plugin eval`)
+plugin/evals/results/
+plugin/evals/last.json
