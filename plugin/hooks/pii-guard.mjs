@@ -7,22 +7,23 @@
  * hides is let through (the role cannot read it anyway); one on a `!` allow line was reviewed.
  *
  * Dependency-free on purpose: it runs on every query, from a plugin directory, with no install.
- * The name heuristic duplicates `looksSensitive` in src/core/hidden.ts; test/plugin-hook.test.ts
- * keeps the two in step.
+ * The name heuristic (WORDS, SPECIAL, ALWAYS, SAFE_TAIL, toSnake, looksSensitive) is a verbatim
+ * copy of src/core/hidden.ts, which cannot be imported from here. Change both files together:
+ * the parity test in test/plugin-hook.test.ts guards against drift.
  */
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-// --- name heuristic: keep identical to src/core/hidden.ts ---------------------------------
+// --- name heuristic: mirrors src/core/hidden.ts; test/plugin-hook.test.ts guards drift -----
 const WORDS = new Set([
   'phone', 'mobile', 'email', 'token', 'secret', 'key', 'transcript', 'password', 'passwd',
   'address', 'ssn', 'iban', 'card', 'dob', 'birth', 'birthday', 'birthdate', 'salt', 'otp', 'pin',
   'passport', 'license', 'licence', 'routing', 'national',
 ]);
 const SPECIAL = /^encrypted_|^prompt_snapshot$|^(lines|credentials)$/;
-const ALWAYS = /^(national|tax|account|bank_account|government)_(id|number)$/;
+const ALWAYS = /^(national|tax|government)_(id|number)$|^(bank_)?account_number$/;
 const SAFE_TAIL =
   /_(verified|confirmed|count|used|at|id|type|status|enabled|required|country|layout|limit|prefix|version|expiry|expires|expiration|rounds|domain)$/;
 

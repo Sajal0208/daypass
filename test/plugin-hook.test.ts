@@ -100,8 +100,10 @@ describe('looksSensitive parity with src/core/hidden.ts', () => {
     'card_number', 'encrypted_payload', 'prompt_snapshot', 'date_of_birth', 'id', 'created_at', 'status',
     'email_verified', 'phone_country', 'tokens_used', 'keyboard_layout', 'name', 'amount', 'phoneNumber', 'apiKey',
     'emailVerified', 'APIKey', 'HTTPToken', 'national_id', 'user_id', 'invoice_number', 'lines',
+    // the account_id fix on main: foreign keys stay visible, the identifiers themselves stay hidden
+    'account_id', 'bank_account_id', 'account_number', 'bank_account_number', 'tax_id',
   ];
-  it('has 40 fixtures', () => expect(names).toHaveLength(40));
+  it('has 45 fixtures', () => expect(names).toHaveLength(45));
   it.each(names)('agrees on %s', (n) => expect(hookLooksSensitive(n)).toBe(coreLooksSensitive(n)));
 });
 

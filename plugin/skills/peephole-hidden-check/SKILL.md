@@ -29,7 +29,7 @@ Then show the re-apply command the user runs after editing the file, as the data
 (`$OWNER_URL` is the owner connection string; Peephole never stores it):
 
 ```bash
-peephole sql --hide-file "${PEEPHOLE_HIDDEN_FILE:-$HOME/.peephole/hidden-columns.txt}" | psql -X "$OWNER_URL" -1 -v ON_ERROR_STOP=1
+peephole sql --hide-file "${PEEPHOLE_HIDDEN_FILE:-$HOME/.peephole/hidden-columns.txt}" | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1
 ```
 
 Never edit the hidden list file and never run `peephole sql` or `psql` yourself: both change what the
