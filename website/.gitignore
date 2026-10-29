@@ -1,5 +1,7 @@
 # build output
 dist/
+# Lighthouse CI run artifacts (npm run lhci)
+.lighthouseci/
 # generated types
 .astro/
 
