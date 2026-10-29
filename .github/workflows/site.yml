@@ -46,4 +46,4 @@ jobs:
       # Canonical and og:url tags point at the site origin (PUBLIC_SITE_URL, a placeholder
       # until a domain is live), so that host is skipped along with rate-limited externals.
       - name: Link check
-        run: npx linkinator@6.1.4 ./dist --recurse --skip "github.com|npmjs.com|plausible.io|peephole.dev"
+        run: npx linkinator@6.1.4 ./dist --recurse --skip "github.com|npmjs.com|plausible.io|peepholedb.com"

@@ -91,7 +91,7 @@ tags point at `PUBLIC_SITE_URL`, which is a placeholder until a domain is live).
 
 | Variable                  | Purpose                                                                                                   |
 | ------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `PUBLIC_SITE_URL`         | Canonical site origin for `<link rel=canonical>`, the sitemap and `robots.txt`. Defaults to `https://peephole.dev` (placeholder until a domain is chosen). |
+| `PUBLIC_SITE_URL`         | Canonical site origin for `<link rel=canonical>`, the sitemap and `robots.txt`. Defaults to `https://peepholedb.com` (placeholder until a domain is chosen; recommended, not yet registered). |
 | `PUBLIC_PLAUSIBLE_DOMAIN` | When set, the Plausible script is injected with this `data-domain`. Unset by default, so local and preview builds send nothing. |
 
 Both are read at build time only.

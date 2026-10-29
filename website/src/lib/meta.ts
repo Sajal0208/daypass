@@ -5,7 +5,7 @@
  * `siteUrl` follows PUBLIC_SITE_URL at build time (see website/README.md); the default is a
  * placeholder until a domain is chosen.
  */
-export const siteUrl: string = (process.env.PUBLIC_SITE_URL ?? 'https://peephole.dev').replace(/\/+$/, '');
+export const siteUrl: string = (process.env.PUBLIC_SITE_URL ?? 'https://peepholedb.com').replace(/\/+$/, '');
 
 export const siteTitle = 'Peephole';
 

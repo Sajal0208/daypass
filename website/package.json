@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "version": "0.0.0",
-  "description": "peephole.dev: the website and docs for the peephole-db package (Astro + Starlight).",
+  "description": "peepholedb.com: the website and docs for the peephole-db package (Astro + Starlight).",
   "scripts": {
     "sync-docs": "node scripts/sync-docs.mjs",
     "predev": "npm run sync-docs",
