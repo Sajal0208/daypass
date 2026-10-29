@@ -25,12 +25,18 @@ export function sslOptions(t: TargetConfig, rdsCaPem: string | undefined): SslOp
   return { rejectUnauthorized: true };
 }
 
-function rdsCa(): string | undefined {
+/** The bundled RDS CA bundle, or undefined if it is not shipped with this install. */
+export function rdsCa(): string | undefined {
   try {
     return readFileSync(RDS_CA_PATH, 'utf8');
   } catch {
     return undefined;
   }
+}
+
+/** True for an AWS RDS endpoint, so a plain URL target can pin the bundled RDS CA like an IAM target does. */
+export function isRdsHost(host: string): boolean {
+  return /\.rds\.amazonaws\.com$/i.test(host);
 }
 
 let cached: { key: string; pool: pg.Pool; tokenAt: number } | null = null;

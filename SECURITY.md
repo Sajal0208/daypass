@@ -32,4 +32,4 @@ The database role is the wall; everything in the client is a second fence. If yo
 `peephole_ro`, set up by `setup-role.sql`, can read a hidden column or write anything, that is a
 critical issue even if the client would have blocked the statement.
 
-Known limits are listed in `docs/plans/2026-10-28-peephole-design.md` under *Risks*.
+Known limits are listed in `docs/threat-model.md`.

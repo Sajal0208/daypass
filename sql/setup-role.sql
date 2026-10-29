@@ -1,24 +1,38 @@
 -- Peephole: one-time setup of the read-only role on the target database.
 -- Run as the DB owner / master user, once per database:
 --
---   peephole sql --hide-file hidden-columns.txt | psql "$DATABASE_URL" -v ON_ERROR_STOP=1
+--   peephole sql --hide-file hidden-columns.txt | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1
+--
+-- (-X skips your psqlrc.)
 --
 -- `peephole sql --role NAME` changes the role name; `--hide table.col ...` / `--hide-file`
 -- list columns the agent must never see. Needs psql (uses \gexec).
 --
--- Safe to re-run. Nothing here touches data. It stops at the first problem and
--- ends with a self-check that fails if any hidden column is still readable.
+-- Safe to re-run. Nothing here touches data. The whole script is ONE transaction (BEGIN below,
+-- COMMIT at the end): it stops at the first problem, and a failed run changes nothing. Without
+-- the transaction a run that fails after the bulk GRANT SELECT ON ALL TABLES (e.g. on a stale
+-- entry in the hidden list) would leave every hidden column readable. It ends with a self-check
+-- that fails if any hidden column is still readable. Re-runs keep an existing password.
 
--- 1. Role: no password; on RDS it logs in only with a short-lived IAM token.
+-- psql settings, restated in case a psqlrc overrides them: stop at the first error, and never
+-- savepoint around a failing statement (ON_ERROR_ROLLBACK=on would let COMMIT land the bulk GRANT).
+\set ON_ERROR_STOP on
+\set ON_ERROR_ROLLBACK off
+
+BEGIN;
+
+-- 1. Role. Created with no password: on RDS it logs in only with a short-lived IAM token
+--    (rds_iam below). On any other Postgres the owner sets one once, after the first run:
+--    ALTER ROLE "__ROLE__" PASSWORD '...'. Re-runs do not touch the password.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '__ROLE__') THEN
-    EXECUTE 'CREATE ROLE "__ROLE__" LOGIN';
+    EXECUTE 'CREATE ROLE "__ROLE__" LOGIN PASSWORD NULL';
   END IF;
 END $$;
 -- SUPERUSER / REPLICATION / BYPASSRLS are not named here: a new role never has them, and on
 -- RDS the master user is not a superuser, so even "NOSUPERUSER" is refused.
-ALTER ROLE "__ROLE__" WITH LOGIN NOCREATEDB NOCREATEROLE NOINHERIT CONNECTION LIMIT 5 PASSWORD NULL;
+ALTER ROLE "__ROLE__" WITH LOGIN NOCREATEDB NOCREATEROLE NOINHERIT CONNECTION LIMIT 5;
 
 -- RDS only. On plain Postgres (local dev) rds_iam does not exist and this is skipped.
 DO $$
@@ -110,3 +124,5 @@ SELECT rolname, rolconnlimit, rolconfig FROM pg_roles WHERE rolname = '__ROLE__'
 -- Tables owned by someone other than you are NOT covered by the default-privileges rule above.
 SELECT tableowner, count(*) AS tables, (tableowner = current_user) AS covered_by_default_privileges
   FROM pg_tables WHERE schemaname = 'public' GROUP BY 1 ORDER BY 2 DESC;
+
+COMMIT;

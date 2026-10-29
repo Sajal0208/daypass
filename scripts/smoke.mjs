@@ -19,6 +19,15 @@ const call = async (name, args = {}) => {
   return { ok: !r.isError, text };
 };
 
+// DEMO=1 (scripts/record-demo.sh): show three calls for the README recording, no assertions.
+if (process.env.DEMO === '1') {
+  await call('query', { sql: 'select id, name from customers' });
+  await call('query', { sql: 'select * from customers' });
+  await call('query', { sql: "update customers set name = 'x'" });
+  await client.close();
+  process.exit(0);
+}
+
 const tools = (await client.listTools()).tools.map((t) => t.name).sort();
 assert.deepEqual(tools, ['describe_table', 'explain', 'list_tables', 'peephole_status', 'query']);
 
@@ -39,6 +48,23 @@ assert.ok(!r.ok && /one statement/.test(r.text), 'multi-statement rejected');
 
 r = await call('query', { sql: 'select pg_sleep(5)' });
 assert.ok(!r.ok && /pg_sleep/.test(r.text), 'pg_sleep rejected');
+
+// A refused explain must be audited exactly like a refused query (allowed: false + blockedReason).
+const lastAudit = () => {
+  const lines = readFileSync(join(home, 'audit.jsonl'), 'utf8').trim().split('\n');
+  return JSON.parse(lines[lines.length - 1]);
+};
+r = await call('explain', { sql: "update customers set name = 'x'" });
+assert.ok(!r.ok && /Only SELECT/.test(r.text), 'explain of a write rejected by the parser');
+let a = lastAudit();
+assert.equal(a.tool, 'explain', 'refused explain is audited');
+assert.equal(a.allowed, false, 'refused explain audited as allowed: false');
+assert.ok(a.blockedReason, 'refused explain audit line carries blockedReason');
+
+r = await call('explain', { sql: "explain update customers set name = 'x'" });
+assert.ok(!r.ok && /only wrap a SELECT/.test(r.text), 'explicit EXPLAIN of a write rejected by the parser');
+a = lastAudit();
+assert.ok(a.tool === 'explain' && a.allowed === false && a.blockedReason, 'refused explicit EXPLAIN is audited');
 
 r = await call('query', { sql: 'select generate_series(1, 2000) as n' });
 assert.ok(r.ok && /TRUNCATED/.test(r.text), 'result capped');

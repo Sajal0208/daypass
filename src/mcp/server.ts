@@ -58,8 +58,9 @@ function errorMessage(e: any): string {
 const text = (s: string) => ({ content: [{ type: 'text' as const, text: s }] });
 const fail = (s: string) => ({ content: [{ type: 'text' as const, text: s }], isError: true });
 
-async function runGuarded(tool: string, sql: string, c: Ctx, wrap: boolean) {
-  const base = {
+/** The fields every audit line carries, allowed or not. */
+function auditBase(tool: string, sql: string, c: Ctx) {
+  return {
     at: new Date().toISOString(),
     who: c.lease.who,
     leaseId: c.lease.id,
@@ -68,11 +69,18 @@ async function runGuarded(tool: string, sql: string, c: Ctx, wrap: boolean) {
     tool,
     sql,
   };
+}
+
+/** Guard rejections are audited like every other call; nothing reaches the database. */
+async function refuse(tool: string, sql: string, c: Ctx, reason: string) {
+  await appendAudit({ ...auditBase(tool, sql, c), allowed: false, blockedReason: reason });
+  return fail(`Blocked: ${reason}`);
+}
+
+async function runGuarded(tool: string, sql: string, c: Ctx, wrap: boolean) {
   const guard = await checkSql(sql);
-  if (!guard.ok) {
-    await appendAudit({ ...base, allowed: false, blockedReason: guard.reason });
-    return fail(`Blocked: ${guard.reason}`);
-  }
+  if (!guard.ok) return refuse(tool, sql, c, guard.reason);
+  const base = auditBase(tool, sql, c);
   const maxRows = c.target.maxRows ?? DEFAULTS.maxRows;
   const finalSql = wrap && guard.kind === 'select' ? wrapWithLimit(sql, maxRows) : sql;
   const t0 = Date.now();
@@ -170,7 +178,7 @@ export function buildServer(): McpServer {
       const c = await ctx();
       if (typeof c === 'string') return fail(c);
       const guard = await checkSql(sql);
-      if (!guard.ok) return fail(`Blocked: ${guard.reason}`);
+      if (!guard.ok) return refuse('explain', sql, c, guard.reason);
       if (guard.kind === 'explain') return runGuarded('explain', sql, c, false);
       return runGuarded('explain', `EXPLAIN (FORMAT TEXT) ${sql.trim().replace(/;\s*$/, '')}`, c, false);
     },
