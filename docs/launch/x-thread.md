@@ -26,14 +26,14 @@ peephole_ro: default_transaction_read_only, 10 s statement timeout, 1 s lock tim
 A column REVOKE does nothing while the role holds table-level SELECT. Our first draft got that wrong.
 ```
 
-## 3 (layer: credentials) — 241 chars
+## 3 (layer: credentials) — 273 chars
 
 ```
 No stored password.
 
 On RDS the role logs in with a 15-minute IAM token minted from your own AWS login. TLS is always verified and RDS targets pin the AWS RDS CA.
 
-Lose AWS access, lose Peephole access. Nothing to rotate when someone leaves.
+Lose AWS access, lose Peephole access. With per-person IAM identities, nothing to rotate when someone leaves.
 ```
 
 ## 4 (layer: the parser) — 264 chars

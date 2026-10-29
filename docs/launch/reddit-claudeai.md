@@ -49,7 +49,7 @@ The MCP server is the same for any client. The plugin is what makes Claude use i
 **Skills.** Before touching the database the skill calls `peephole_status` first. If there
 is no lease it does not try, does not guess, and does not ask you to paste a URL. It
 gives you the exact line to run, with the target and a reason filled in from the
-conversation:
+conversation, something like:
 
 ```
 No active Peephole lease. Run this in a terminal, then tell me:
@@ -82,7 +82,8 @@ in the hidden list (the hook must refuse). Run it after you change the skill.
 
 **Setup walkthrough.** A skill that takes you from `peephole init` through the hidden-
 columns list, the one-time SQL and `peephole doctor`. It uses
-`peephole hidden suggest`, which generates the first draft of the hidden-columns list
+`peephole hidden suggest --prisma prisma/schema.prisma` (or `--live <target>`), which
+generates the first draft of the hidden-columns list
 from a Prisma schema or from the live catalog, so you start from a list of every
 email/phone/secret-looking column rather than from a blank file.
 

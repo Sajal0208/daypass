@@ -10,7 +10,7 @@ A read-only role for AI coding agents: column-level grants, timeouts, a parser a
 
 We give Claude Code a time-boxed, read-only window onto our production Postgres. The
 client side is an MCP server; the part I want this sub to look at is the role. The
-setup script is 120 lines of SQL and I would rather hear about a hole here than from an
+setup script is about 110 lines of SQL and I would rather hear about a hole here than from an
 agent.
 
 Repo: https://github.com/Sajal0208/peephole. Script: `sql/setup-role.sql`. MIT.
@@ -111,10 +111,11 @@ the result is cut to 500 rows, 2 KB per cell, 1 MB total before the model sees i
    `-v ON_ERROR_STOP=1`. Is there a path for `peephole_ro` to read a hidden column or write
    anything? Views, functions with `SECURITY DEFINER`, sequences, RLS and
    `pg_catalog` are the places I am least sure about.
-2. Anything in `pg_catalog` or `information_schema` that leaks hidden column *values*
-   (statistics in `pg_stats` are the obvious one; the role gets no explicit grant on it,
-   but it is readable by default for tables the role can select from. If you know whether
-   column-level grants are respected there, say so).
+2. Anything else in `pg_catalog` or `information_schema` that leaks hidden column
+   *values*. `pg_stats` is the obvious candidate and is already covered: its view
+   definition filters on `has_column_privilege(c.oid, a.attnum, 'select')`, so hidden
+   columns get no statistics row, and `pg_statistic` itself is revoked from `public`. I am
+   asking about anything beyond those two.
 3. Functions missing from the banned set that are callable by an ordinary role and can
    block, write, or read files.
 

@@ -63,7 +63,7 @@ enforced by the database and checked by a test that fails when it is wrong.
 ## The five layers
 
 Each layer is enough for the job it has. All run together. The first two are the wall:
-they alone make writes impossible. The other three are fences: they limit blast radius,
+they alone make writes to your tables impossible. The other three are fences: they limit blast radius,
 cost and context size, but none stops a write by itself.
 
 **1. The database role.** `peephole_ro` has `SELECT` on visible columns only, as above.

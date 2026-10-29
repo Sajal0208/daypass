@@ -42,7 +42,7 @@ Generate the hidden-columns list from your Prisma schema or from the live catalo
 read it before you trust it:
 
 ```bash
-peephole hidden suggest > hidden-columns.txt     # from a Prisma schema or the live catalog; see --help
+peephole hidden suggest --prisma prisma/schema.prisma > hidden-columns.txt   # or --live <target> / --url <owner url>
 ```
 
 Then create the role as the database owner:
