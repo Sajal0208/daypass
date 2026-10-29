@@ -14,8 +14,8 @@ updates:
       minor-and-patch:
         update-types: [minor, patch]
 
-  # The docs site lives in website/ once that branch lands. Until then Dependabot logs a
-  # warning for the missing directory and moves on; nothing fails.
+  # The docs site (website/, Astro + Starlight) is its own npm project with its own lockfile,
+  # excluded from the root install and the published tarball, so it gets its own entry.
   - package-ecosystem: npm
     directory: /website
     schedule:

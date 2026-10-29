@@ -1,0 +1,53 @@
+/*
+ * Tailwind 4 + Starlight, wired the way the Starlight docs recommend
+ * (https://starlight.astro.build/guides/css-and-tailwind/#tailwind-css).
+ *
+ * The plain `@import "tailwindcss"` is deliberately not used: it would pull in Tailwind's
+ * Preflight, which resets the styles Starlight's layout depends on. The Starlight plugin
+ * restores the few Preflight rules that matter and maps Starlight's theme variables onto
+ * Tailwind's theme tokens, so `--color-accent-*` below drives both.
+ */
+@layer base, starlight, theme, components, utilities;
+
+@import '@astrojs/starlight-tailwind';
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+@theme {
+	/* System font stack for text, ui-monospace first for code. */
+	--font-sans:
+		ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+		sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+	--font-mono:
+		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+		monospace;
+
+	/* One accent hue: teal. Used by Tailwind utilities (bg-accent-600, …) and by Starlight. */
+	--color-accent-50: var(--color-teal-50);
+	--color-accent-100: var(--color-teal-100);
+	--color-accent-200: var(--color-teal-200);
+	--color-accent-300: var(--color-teal-300);
+	--color-accent-400: var(--color-teal-400);
+	--color-accent-500: var(--color-teal-500);
+	--color-accent-600: var(--color-teal-600);
+	--color-accent-700: var(--color-teal-700);
+	--color-accent-800: var(--color-teal-800);
+	--color-accent-900: var(--color-teal-900);
+	--color-accent-950: var(--color-teal-950);
+}
+
+/*
+ * Starlight reads these three variables for links, the active sidebar item, buttons and
+ * focus rings. Dark is the default theme; light overrides it.
+ */
+:root {
+	--sl-color-accent-low: var(--color-accent-950);
+	--sl-color-accent: var(--color-accent-600);
+	--sl-color-accent-high: var(--color-accent-200);
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: var(--color-accent-100);
+	--sl-color-accent: var(--color-accent-700);
+	--sl-color-accent-high: var(--color-accent-900);
+}

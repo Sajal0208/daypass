@@ -169,4 +169,4 @@ A plain Postgres error passed through. Any message that starts with `Query faile
 
 ## Still stuck
 
-`peephole log -n 50` shows what the agent sent and what came back, in order. Run `peephole doctor <target>` again after each change. If the role can do something it should not, do not open an issue; follow [../SECURITY.md](../SECURITY.md).
+`peephole log -n 50` shows what the agent sent and what came back, in order. Run `peephole doctor <target>` again after each change. If the role can do something it should not, do not open an issue; follow the [security policy](../SECURITY.md).
