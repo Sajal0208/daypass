@@ -97,7 +97,7 @@ nothing above: not the columns you name, not what you paste, not the sign-off.
 peephole open staging --ttl 45m --reason "signups yesterday vs day before"
 ```
 
-**Lease open.** `peephole_status` → `Lease 7f3a2c on "staging" by alice@laptop.local:
+**Lease open.** `peephole_status` → `Lease 7f3a2c1e on "staging" by alice@laptop.local:
 38 min left. Reason: why did signups drop on Monday` → `list_tables` → `describe_table
 customers` → `query`:
 
@@ -112,5 +112,5 @@ on plan 1 with a placeholder name and look like test accounts. I did not read `n
 it is free text and the question did not need it." then:
 
 ```
-Lease 7f3a2c · reason: "why did signups drop on Monday" · 1 queries
+Lease 7f3a2c1e · reason: "why did signups drop on Monday" · 1 queries
 ```

@@ -56,7 +56,8 @@ Glob for `**/schema.prisma`. If one exists:
 once the target can log in.) Show the file. Explain:
 
 - The heuristic matches column *names* only (`phone`, `email`, `token`, `secret`, `key`,
-  `transcript`, `password`, `address`, `ssn`, `encrypted_*`, `*_number`, ...). It is a draft.
+  `transcript`, `password`, `address`, `ssn`, `encrypted_*`, `account_number`, `tax_id`,
+  `national_id`, ...). It is a draft.
 - Ask the admin to review every table, not just flagged lines: `notes`, `body`, `payload`,
   `metadata`, `raw` hide PII under neutral names. Hashed secrets stay hidden. Ids, timestamps,
   statuses, amounts stay visible; a whole-PII table keeps its primary key visible.

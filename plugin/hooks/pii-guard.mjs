@@ -101,58 +101,84 @@ function identifiers(text) {
   return out;
 }
 
+const HIDDEN_DOCS = 'https://github.com/Sajal0208/peephole/blob/main/docs/hidden-columns.md';
+
 /**
+ * Deny reasons are relayed to the human by the model ("Tell the user: ..."); they are never
+ * phrased as an instruction to the model itself.
+ *
  * @param {string} sql
- * @param {string | null} hiddenFileText  contents of the list, or null when the file is missing
+ * @param {string | null | { error: string }} hiddenFile  contents of the list; null when the
+ *   file does not exist (ENOENT); `{ error }` with the error code when it exists but cannot be read
  * @param {Record<string, string | undefined>} env
  * @returns {{ allow: true } | { allow: false, reason: string }}
  */
-export function decide(sql, hiddenFileText, env) {
+export function decide(sql, hiddenFile, env) {
   if (env.PEEPHOLE_PII_HOOK === 'off') return { allow: true };
   const path = hiddenFilePath(env);
   const text = stripLiteralsAndComments(sql).replace(/"/g, '');
   const aliases = tableAliases(text);
   for (const { name, qualifier } of identifiers(text)) {
     if (KEYWORDS.has(name.toLowerCase()) || !looksSensitive(name)) continue;
-    if (hiddenFileText === null) {
+    if (hiddenFile === null) {
       return {
         allow: false,
         reason:
-          `Peephole PII guard: no hidden-columns list at ${path}. Generate one with ` +
-          `"peephole hidden suggest --live <target> > ${path}" (see docs/hidden-columns.md) or set PEEPHOLE_PII_HOOK=off.`,
+          `Peephole PII guard: no hidden-columns list at ${path}. Tell the user: generate one with ` +
+          `peephole hidden suggest --live <target> > ${path} (${HIDDEN_DOCS}), or set PEEPHOLE_PII_HOOK=off for this session.`,
       };
     }
-    const { hidden, allow } = parseHiddenFile(hiddenFileText);
+    if (typeof hiddenFile !== 'string') {
+      return {
+        allow: false,
+        reason:
+          `Peephole PII guard: cannot read hidden-columns list at ${path}: ${hiddenFile.error}. ` +
+          `Tell the user: fix or remove that file, or set PEEPHOLE_PII_HOOK=off for this session.`,
+      };
+    }
+    const { hidden, allow } = parseHiddenFile(hiddenFile);
     const covered = new Set([...hidden, ...allow].map((e) => e.split('.').pop().toLowerCase()));
     if (covered.has(name.toLowerCase())) continue;
     const table = qualifier ? aliases.get(qualifier.toLowerCase()) ?? qualifier : '<table>';
     return {
       allow: false,
       reason:
-        `Peephole PII guard: "${name}" looks like personal or secret data and is not in your hidden-columns list (${path}). ` +
-        `If it must stay visible, add "!${table}.${name}" to the list after review, or set PEEPHOLE_PII_HOOK=off for this session; ` +
-        `otherwise add "${table}.${name}" and re-run "peephole sql --hide-file ${path} | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1".`,
+        `Peephole PII guard: "${name}" looks like personal or secret data and is not in the hidden-columns list (${path}). ` +
+        `Tell the user: if it must stay visible, add "!${table}.${name}" after review, or set PEEPHOLE_PII_HOOK=off for this session; ` +
+        `otherwise add "${table}.${name}" and have the database owner re-run ` +
+        `peephole sql --hide-file ${path} | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1.`,
     };
   }
   return { allow: true };
 }
 
+/**
+ * Exit codes follow the Claude Code hook contract: 0 = no decision (the call goes ahead),
+ * 2 = block with the reason on stderr, anything else = non-blocking error whose first stderr
+ * line shows in the transcript. Unparsable stdin is not a tool call we understand, so it is
+ * let through silently; a tool input with no `sql` is let through with a visible note, so a
+ * renamed argument does not turn the guard off unnoticed.
+ */
 function main() {
   let input;
   try {
     input = JSON.parse(readFileSync(0, 'utf8'));
   } catch {
-    return; // not a tool call we understand; never block on our own failure
+    return;
   }
-  const sql = input?.tool_input?.sql;
-  if (typeof sql !== 'string') return;
-  let text = null;
+  const toolInput = input?.tool_input;
+  if (toolInput === null || typeof toolInput !== 'object') return;
+  if (typeof toolInput.sql !== 'string') {
+    process.stderr.write('Peephole PII guard: no "sql" in tool input, not checked\n');
+    process.exit(1);
+  }
+  let hiddenFile;
   try {
-    text = readFileSync(hiddenFilePath(process.env), 'utf8');
-  } catch {
-    text = null;
+    hiddenFile = readFileSync(hiddenFilePath(process.env), 'utf8');
+  } catch (err) {
+    hiddenFile = err?.code === 'ENOENT' ? null : { error: err?.code ?? String(err) };
   }
-  const verdict = decide(sql, text, process.env);
+  const verdict = decide(toolInput.sql, hiddenFile, process.env);
   if (!verdict.allow) {
     process.stderr.write(verdict.reason + '\n');
     process.exit(2);

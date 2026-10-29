@@ -128,14 +128,18 @@ and other safe tails are not flagged). The hook reads the hidden-columns list fr
    sees:
 
    ```
-   Peephole PII guard: no hidden-columns list at <path>. Generate one with "peephole hidden suggest --live <target> > <path>" (see docs/hidden-columns.md) or set PEEPHOLE_PII_HOOK=off.
+   Peephole PII guard: no hidden-columns list at <path>. Tell the user: generate one with peephole hidden suggest --live <target> > <path> (https://github.com/Sajal0208/peephole/blob/main/docs/hidden-columns.md), or set PEEPHOLE_PII_HOOK=off for this session.
    ```
+
+   A list file that exists but cannot be read (a directory, no permission) blocks the same
+   way with `Peephole PII guard: cannot read hidden-columns list at <path>: <code>. Tell the
+   user: fix or remove that file, or set PEEPHOLE_PII_HOOK=off for this session.`
 
 3. **Blocked: not in the list.** An identifier looks sensitive and the list says nothing
    about it, hidden or allowed. Claude sees:
 
    ```
-   Peephole PII guard: "<column>" looks like personal or secret data and is not in your hidden-columns list (<path>). If it must stay visible, add "!<table>.<column>" to the list after review, or set PEEPHOLE_PII_HOOK=off for this session; otherwise add "<table>.<column>" and re-run "peephole sql --hide-file <path> | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1".
+   Peephole PII guard: "<column>" looks like personal or secret data and is not in the hidden-columns list (<path>). Tell the user: if it must stay visible, add "!<table>.<column>" after review, or set PEEPHOLE_PII_HOOK=off for this session; otherwise add "<table>.<column>" and have the database owner re-run peephole sql --hide-file <path> | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1.
    ```
 
    `<table>` is resolved through the `FROM`/`JOIN` aliases in the statement when the
@@ -143,12 +147,16 @@ and other safe tails are not flagged). The hook reads the hidden-columns list fr
    is the placeholder `<table>` otherwise.
 
 A blocked call never reaches the database, and the hook exits 2 with the reason on stderr,
-which is how Claude Code shows it to Claude. A line starting with `!` in the list records a
+which is how Claude Code shows it to Claude; every reason is written for Claude to relay to
+you, not as an instruction to Claude. A line starting with `!` in the list records a
 reviewed exception (`!servers.address  # host IP`): `peephole hidden check` stops flagging
 it, `peephole sql` does not hide it, and the hook lets it through. Set
 `PEEPHOLE_PII_HOOK=off` in the environment Claude Code runs in to disable the hook for a
-session. The hook never blocks on its own failure: input it cannot parse, or a call with no
-`sql` field, is let through.
+session. The hook never blocks on its own failure: stdin it cannot parse is let through
+silently, and a tool input with no `sql` field is let through with a visible
+`Peephole PII guard: no "sql" in tool input, not checked` notice (exit 1, a non-blocking
+error). A hook that crashes or hits its timeout also lets the call through, which is one
+more reason the role, not the hook, is the wall.
 
 **Limits, honestly.** The hook matches column *names* across all tables: `users.phone`
 hidden in the list also lets `support_tickets.phone` through, and a PII column with a

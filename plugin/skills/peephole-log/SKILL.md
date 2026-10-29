@@ -7,10 +7,10 @@ argument-hint: "[N]"
 
 # Peephole log
 
-`$ARGUMENTS` is an optional count N, default 20. Run with Bash, substituting it:
+`$ARGUMENTS` is an optional count N; if `$ARGUMENTS` is empty, use 20. Run with Bash:
 
 ```bash
-peephole log -n ${ARGUMENTS:-20}
+peephole log -n $ARGUMENTS
 ```
 
 Each line is `<at> <ok|ERR|BLK> <who> <target> <tool> <rows>r <ms>ms  <sql>  <- <reason>`; `-r`/`-ms`

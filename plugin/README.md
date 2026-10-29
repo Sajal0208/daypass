@@ -50,7 +50,7 @@ The bare MCP server gives Claude five tools: `peephole_status`, `list_tables`,
 | `/peephole:peephole-status` | Is a lease open, on which target, how long is left. |
 | `/peephole:peephole-log` | The last audit entries: who, why, what SQL, rows, ms. |
 | `/peephole:peephole-hidden-check` | Compares `hidden-columns.txt` with the schema and reports drift. |
-| PII guard hook | Runs on every `query` result and warns when a column that looks like personal data or a secret came back, even though the database let it through. |
+| PII guard hook | `PreToolUse` on `query`: before the SQL leaves Claude Code it pulls every identifier out of the statement, ignoring string literals and comments, checks each against the same name heuristic `peephole hidden suggest` uses, and blocks the call when one looks like personal or secret data and the hidden-columns list says nothing about it. |
 | Evals | Scenarios under `evals/` that check the skills behave as documented (no lease, lease open, hidden column). |
 
 ## Daily use
