@@ -4,9 +4,9 @@
       "name": "daypass_status",
       "description": "Show whether a Daypass lease is open, for which database, and how long is left.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
-        "properties": {}
+        "properties": {},
+        "$schema": "http://json-schema.org/draft-07/schema#"
       },
       "execution": {
         "taskSupport": "forbidden"
@@ -16,9 +16,9 @@
       "name": "list_tables",
       "description": "List tables with estimated row counts in the schemas this lease may see.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
-        "properties": {}
+        "properties": {},
+        "$schema": "http://json-schema.org/draft-07/schema#"
       },
       "execution": {
         "taskSupport": "forbidden"

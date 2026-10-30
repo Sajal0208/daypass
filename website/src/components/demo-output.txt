@@ -1,18 +1,18 @@
 $ daypass open prod --ttl 30m --reason "why did signups drop on Monday"
-Lease 17849dac open on "prod" until 2026-10-29T14:50:58.118Z (30m). Reason: why did signups drop on Monday
+Lease 2ceae5b9 open on "prod" until 2026-10-30T06:20:47.784Z (30m). Reason: why did signups drop on Monday
 Your AI session can now use the daypass MCP tools. Close early with: daypass close
 
 $ daypass status
-Lease 17849dac on "prod" by dev@laptop: 30 min left. Reason: why did signups drop on Monday
+Lease 2ceae5b9 on "prod" by dev@laptop: 30 min left. Reason: why did signups drop on Monday
 
 $ daypass doctor prod
 ✔ node >= 20       v25.0.0
-✔ config           /tmp/daypass-demo.Dd92q3/.daypass/config.json (prod)
+✔ config           /tmp/daypass-demo.jDv6no/.daypass/config.json (prod)
 ✔ target           prod: daypass_ro@localhost:5439/postgres via password
 ✔ dns              localhost → ::1
 ✔ tcp              localhost:5439 open
-✔ lease            17849dac until 2026-10-29T14:50:58.118Z
-✔ db login         as daypass_ro; read_only=on; PostgreSQL 16.14 (Debian 16.14-1.pgdg13+1) on aarch64-unknown-linux-gnu
+✔ lease            2ceae5b9 until 2026-10-30T06:20:47.784Z
+✔ db login         as daypass_ro; read_only=on; PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on aarch64-unknown-linux-gnu
 ✔ write blocked    write attempt rejected, as it should be
 
 $ DEMO=1 node scripts/smoke.mjs
@@ -21,10 +21,10 @@ $ DEMO=1 node scripts/smoke.mjs
 ✖ query {"sql":"update customers set name = 'x'"} → Blocked: Only SELECT is allowed (got Update)
 
 $ daypass log -n 3
-2026-10-29T14:20:58.808Z ok   dev@laptop prod query 4r 17ms  select id, name from customers
-2026-10-29T14:20:58.834Z ERR  dev@laptop prod query -r 2ms  select * from customers  <- permission denied for table customers
-2026-10-29T14:20:58.837Z BLK  dev@laptop prod query -r -ms  update customers set name = 'x'  <- Only SELECT is allowed (got Update)
+2026-10-30T05:50:48.511Z ok   dev@laptop prod query 4r 17ms  select id, name from customers
+2026-10-30T05:50:48.531Z ERR  dev@laptop prod query -r 2ms  select * from customers  <- permission denied for table customers
+2026-10-30T05:50:48.534Z BLK  dev@laptop prod query -r -ms  update customers set name = 'x'  <- Only SELECT is allowed (got Update)
 
 $ daypass close
-Lease 17849dac closed.
+Lease 2ceae5b9 closed.
 
