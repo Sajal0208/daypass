@@ -13,7 +13,7 @@ export interface Shaped {
 /** Ask for one row more than the cap so we can tell "exactly N" from "more than N". */
 export function wrapWithLimit(sql: string, maxRows: number): string {
   const inner = sql.trim().replace(/;\s*$/, '').trim();
-  return `SELECT * FROM (${inner}) peephole_q LIMIT ${maxRows + 1}`;
+  return `SELECT * FROM (${inner}) daypass_q LIMIT ${maxRows + 1}`;
 }
 
 function cell(v: unknown, maxCell: number): unknown {

@@ -19,7 +19,7 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 				<a class="land-btn land-btn-primary" href="/docs/quickstart/">Quickstart</a>
 				<a class="land-btn land-btn-secondary" href={repoUrl}>GitHub</a>
 			</div>
-			<InstallSnippet command="npm install -g peephole-db" />
+			<InstallSnippet command="npm install -g daypass" />
 		</div>
 	</section>
 
@@ -27,7 +27,7 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 		<div class="land-wrap">
 			<h2 id="how">How it works</h2>
 			<p class="land-lead">
-				You open a lease: <code>peephole open prod --ttl 45m --reason "..."</code>. For that
+				You open a lease: <code>daypass open prod --ttl 45m --reason "..."</code>. For that
 				time the agent can run <code>SELECT</code>s on your Postgres through five MCP tools.
 				Then the door shuts on its own.
 			</p>
@@ -46,7 +46,7 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 		<div class="land-wrap">
 			<h2 id="demo">In the terminal</h2>
 			<p class="land-lead">
-				Open a lease, run <code>peephole doctor</code>, then three queries: one works, <code>SELECT *</code> on a table with hidden columns is refused by Postgres, and an <code>UPDATE</code> never reaches it. <code>peephole log</code> shows all three.
+				Open a lease, run <code>daypass doctor</code>, then three queries: one works, <code>SELECT *</code> on a table with hidden columns is refused by Postgres, and an <code>UPDATE</code> never reaches it. <code>daypass log</code> shows all three.
 			</p>
 			<TerminalDemo />
 		</div>
@@ -78,7 +78,7 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 					person and a reason.
 				</li>
 			</ul>
-			<p>Peephole replaces the URL with a lease, a role, a parser and an audit line.</p>
+			<p>Daypass replaces the URL with a lease, a role, a parser and an audit line.</p>
 			</div>
 		</div>
 	</section>
@@ -90,10 +90,10 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 			<p>
 				The plugin bundles the MCP server, so you skip <code>claude mcp add</code>. Two commands
 				inside Claude Code, and the tools are there the next time a lease is open. Any other MCP
-				client works too: the command is <code>peephole mcp</code> over stdio.
+				client works too: the command is <code>daypass mcp</code> over stdio.
 			</p>
-			<pre class="land-code"><code>/plugin marketplace add Sajal0208/peephole
-/plugin install peephole@peephole</code></pre>
+			<pre class="land-code"><code>/plugin marketplace add Sajal0208/daypass
+/plugin install daypass@daypass</code></pre>
 			<p><a href="/docs/plugin/">What the plugin adds on top of the bare MCP server</a></p>
 			</div>
 		</div>

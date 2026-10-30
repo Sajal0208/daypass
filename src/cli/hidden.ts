@@ -28,7 +28,7 @@ function parseSchemas(s: string | undefined, fallback: string[]): string[] {
   const schemas = s === undefined ? fallback : s.split(',').map((x) => x.trim()).filter(Boolean);
   if (!schemas.length) throw new Error('--schemas must name at least one schema');
   if (schemas.some((x) => x !== 'public')) {
-    console.error('warning: columns in other schemas are listed without the schema prefix; `peephole sql` applies them to `public` only');
+    console.error('warning: columns in other schemas are listed without the schema prefix; `daypass sql` applies them to `public` only');
   }
   return schemas;
 }
@@ -54,7 +54,7 @@ async function liveColumns(targetName: string, schemasOpt: string | undefined): 
 }
 
 /**
- * Plain client on a URL (typically the owner URL used for `peephole sql | psql`). TLS follows the
+ * Plain client on a URL (typically the owner URL used for `daypass sql | psql`). TLS follows the
  * URL-target rule: `sslmode=disable` turns it off, anything else is verified; an RDS host pins the
  * bundled RDS CA like an IAM target does. The URL is parsed into explicit fields so a
  * `sslmode=no-verify` in it cannot weaken that.
@@ -71,7 +71,7 @@ async function urlColumns(url: string, schemasOpt: string | undefined): Promise<
     user: u.username ? decodeURIComponent(u.username) : undefined,
     password: u.password ? decodeURIComponent(u.password) : undefined,
     ssl,
-    application_name: 'peephole',
+    application_name: 'daypass',
     connectionTimeoutMillis: 10_000,
   });
   await client.connect();
@@ -99,16 +99,16 @@ function withSource(cmd: Command): Command {
 }
 
 export function hiddenCommand(): Command {
-  const hidden = new Command('hidden').description('Generate or verify the hidden-columns list used by peephole sql --hide-file');
+  const hidden = new Command('hidden').description('Generate or verify the hidden-columns list used by daypass sql --hide-file');
 
   withSource(hidden.command('suggest').description('Print sensitive-looking columns as table.column (redirect to hidden-columns.txt)')).action(
     async (opts: SourceOpts) => {
       const all = await loadColumns(opts);
       const cols = suggestHidden(all);
-      console.error(`peephole hidden suggest: ${cols.length} of ${all.length} columns flagged`);
+      console.error(`daypass hidden suggest: ${cols.length} of ${all.length} columns flagged`);
       const lines = [
-        `# Suggested by peephole hidden suggest on ${new Date().toISOString()}. Review this list, then:`,
-        '#   peephole sql --hide-file <this file> | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1',
+        `# Suggested by daypass hidden suggest on ${new Date().toISOString()}. Review this list, then:`,
+        '#   daypass sql --hide-file <this file> | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1',
         ...cols,
       ];
       process.stdout.write(lines.join('\n') + '\n');

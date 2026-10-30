@@ -27,11 +27,11 @@ model User {
 }
 `;
 
-describe('peephole hidden (CLI)', () => {
+describe('daypass hidden (CLI)', () => {
   let dir: string;
   beforeAll(() => {
     if (!existsSync(CLI)) execFileSync('npx', ['tsc', '-p', 'tsconfig.json'], { cwd: ROOT, stdio: 'inherit' });
-    dir = mkdtempSync(join(tmpdir(), 'peephole-hidden-'));
+    dir = mkdtempSync(join(tmpdir(), 'daypass-hidden-'));
     writeFileSync(join(dir, 'schema.prisma'), SCHEMA);
   }, 60_000);
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -40,7 +40,7 @@ describe('peephole hidden (CLI)', () => {
     const suggest = await run('hidden', 'suggest', '--prisma', join(dir, 'schema.prisma'));
     expect(suggest.code).toBe(0);
     expect(suggest.stdout.split('\n').filter((l) => l && !l.startsWith('#'))).toEqual(['AppUser.APIKey', 'AppUser.phoneNumber']);
-    expect(suggest.stderr).toContain('peephole hidden suggest: 2 of 4 columns flagged');
+    expect(suggest.stderr).toContain('daypass hidden suggest: 2 of 4 columns flagged');
     writeFileSync(join(dir, 'hidden.txt'), suggest.stdout);
 
     const sql = await run('sql', '--hide-file', join(dir, 'hidden.txt'));

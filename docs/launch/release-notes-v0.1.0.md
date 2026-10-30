@@ -1,12 +1,12 @@
-# peephole-db 0.1.0
+# daypass 0.1.0
 
 First release. Temporary, read-only, audited Postgres access for AI coding agents. A human
 opens a lease; Claude Code (or any MCP client) gets `SELECT`-only tools until it expires.
 
 ## What is in it
 
-- `peephole open|status|close|sweep|log|doctor|sql|init|mcp`
-- MCP tools: `peephole_status`, `list_tables`, `describe_table`, `explain`, `query`
+- `daypass open|status|close|sweep|log|doctor|sql|init|mcp`
+- MCP tools: `daypass_status`, `list_tables`, `describe_table`, `explain`, `query`
 - Postgres only. Auth: AWS RDS IAM tokens (no stored password) or a connection URL /
   password for any other Postgres.
 - Guard: real Postgres parser (`libpg-query`); one statement; `SELECT`/`EXPLAIN` only; blocks
@@ -15,25 +15,25 @@ opens a lease; Claude Code (or any MCP client) gets `SELECT`-only tools until it
   session.
 - TLS always verified; RDS targets pin the bundled AWS RDS CA. Audit `who` is the AWS caller
   ARN for IAM targets.
-- Audit: one JSON line per call in `~/.peephole/audit.jsonl`.
+- Audit: one JSON line per call in `~/.daypass/audit.jsonl`.
 - Optional: punch the caller's IP into an AWS security group for the lease and remove it
   after.
 
 ## Install
 
 ```bash
-npm install -g peephole-db
-peephole init                                            # writes ~/.peephole/config.json
-claude mcp add --scope user peephole -- peephole mcp     # any MCP client: `peephole mcp` over stdio
+npm install -g daypass
+daypass init                                            # writes ~/.daypass/config.json
+claude mcp add --scope user daypass -- daypass mcp     # any MCP client: `daypass mcp` over stdio
 ```
 
-Claude Code plugin (skills, `/peephole:peephole-status|log|hidden-check`, a PreToolUse hook
+Claude Code plugin (skills, `/daypass:daypass-status|log|hidden-check`, a PreToolUse hook
 that refuses SQL naming PII-looking columns outside your hidden list, and a three-case
 `claude plugin eval` suite):
 
 ```
-/plugin marketplace add Sajal0208/peephole
-/plugin install peephole@peephole
+/plugin marketplace add Sajal0208/daypass
+/plugin install daypass@daypass
 ```
 
 ## One-time database setup
@@ -42,16 +42,16 @@ Generate the hidden-columns list from your Prisma schema or from the live catalo
 read it before you trust it:
 
 ```bash
-peephole hidden suggest --prisma prisma/schema.prisma > hidden-columns.txt   # or --live <target> / --url <owner url>
+daypass hidden suggest --prisma prisma/schema.prisma > hidden-columns.txt   # or --live <target> / --url <owner url>
 ```
 
 Then create the role as the database owner:
 
 ```bash
-peephole sql --hide-file hidden-columns.txt | psql "$DATABASE_URL" -v ON_ERROR_STOP=1
+daypass sql --hide-file hidden-columns.txt | psql "$DATABASE_URL" -v ON_ERROR_STOP=1
 ```
 
-The script creates `peephole_ro` with `SELECT` on everything except the hidden columns,
+The script creates `daypass_ro` with `SELECT` on everything except the hidden columns,
 sets `default_transaction_read_only`, the timeouts and `CONNECTION LIMIT 5`, and ends with
 a self-check that fails if a hidden column is still readable. Safe to re-run.
 
@@ -78,8 +78,8 @@ Read these before you run it against anything you care about.
   and re-run. Columns added to a table that already has a hidden column go the other way:
   hidden until re-run.
 - **A column you forgot to list is not hidden.** The role setup is the wall; the hidden
-  list is your responsibility. `peephole hidden suggest` and the Prisma check
-  (`PEEPHOLE_HIDDEN_FILE=... PEEPHOLE_PRISMA_SCHEMA=... npm test`) reduce the chance, they
+  list is your responsibility. `daypass hidden suggest` and the Prisma check
+  (`DAYPASS_HIDDEN_FILE=... DAYPASS_PRISMA_SCHEMA=... npm test`) reduce the chance, they
   do not remove it.
 - **A lease is per laptop, not per Claude session.** Every Claude Code window on the
   machine has the tools while the lease is open.
@@ -94,7 +94,7 @@ hidden column, run a write, bypass a lease, escape the timeouts or leak a creden
 within 3 working days; fix within 14 days for anything that weakens the read-only guarantee.
 See `SECURITY.md`.
 
-Links: https://github.com/Sajal0208/peephole · https://www.npmjs.com/package/peephole-db ·
+Links: https://github.com/Sajal0208/daypass · https://www.npmjs.com/package/daypass ·
 <SITE_URL>
 
 MIT. Built by Vocobase.

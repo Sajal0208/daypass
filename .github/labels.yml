@@ -8,7 +8,7 @@
   description: sql/setup-role.sql and the hidden-column role
 - name: area:cli
   color: "0e8a16"
-  description: The peephole command line (init, open, close, doctor, ...)
+  description: The daypass command line (init, open, close, doctor, ...)
 - name: area:mcp
   color: "1d76db"
   description: The MCP server and its five tools

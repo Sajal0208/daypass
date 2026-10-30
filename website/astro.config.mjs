@@ -18,7 +18,7 @@ const plausibleDomain = process.env.PUBLIC_PLAUSIBLE_DOMAIN;
 const head = [
 	{ tag: 'link', attrs: { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' } },
 	{ tag: 'meta', attrs: { property: 'og:type', content: 'website' } },
-	{ tag: 'meta', attrs: { property: 'og:site_name', content: 'Peephole' } },
+	{ tag: 'meta', attrs: { property: 'og:site_name', content: 'Daypass' } },
 	{ tag: 'meta', attrs: { property: 'og:image', content: ogImage.url } },
 	{ tag: 'meta', attrs: { property: 'og:image:width', content: String(ogImage.width) } },
 	{ tag: 'meta', attrs: { property: 'og:image:height', content: String(ogImage.height) } },
@@ -40,7 +40,7 @@ export default defineConfig({
 	trailingSlash: 'always',
 	integrations: [
 		starlight({
-			title: 'Peephole',
+			title: 'Daypass',
 			description: siteDescription,
 			social: [{ icon: 'github', label: 'GitHub', href: repoUrl }],
 			sidebar: [

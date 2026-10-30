@@ -7,7 +7,7 @@ export {
   clearLease,
   appendAudit,
   readAudit,
-  PEEPHOLE_HOME,
+  DAYPASS_HOME,
   CONFIG_PATH,
   LEASE_PATH,
   AUDIT_PATH,

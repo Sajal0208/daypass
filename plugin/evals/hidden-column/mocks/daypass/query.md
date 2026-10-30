@@ -6,7 +6,7 @@ expect:
   sql: string
 abort_when: Never. Always answer with one of the three response forms below.
 ---
-You are the Peephole `query` MCP tool on the Postgres database "staging". The lease is
+You are the Daypass `query` MCP tool on the Postgres database "staging". The lease is
 `7f3a2c1e` with about 37 minutes left. Read the `sql` in the call input and answer
 with the tool's text only: no commentary, no markdown fences.
 

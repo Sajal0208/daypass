@@ -20,7 +20,7 @@
 			<th scope="row">No stored password</th>
 			<td>
 				On AWS RDS the role logs in with a 15-minute IAM token minted from <em>your</em> AWS
-				identity. Lose AWS access, lose Peephole access.
+				identity. Lose AWS access, lose Daypass access.
 			</td>
 		</tr>
 		<tr>
@@ -37,7 +37,7 @@
 		<tr>
 			<th scope="row">Audit</th>
 			<td>
-				One JSON line per call in <code>~/.peephole/audit.jsonl</code>: time, caller (AWS ARN
+				One JSON line per call in <code>~/.daypass/audit.jsonl</code>: time, caller (AWS ARN
 				for IAM targets), lease id, reason, SQL, rows, ms, allowed/blocked.
 			</td>
 		</tr>

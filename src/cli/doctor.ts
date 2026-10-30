@@ -72,7 +72,7 @@ export async function doctor(targetName?: string): Promise<Check[]> {
   push('tcp', port === 'open', `${t.host}:${t.port} ${port}`);
 
   const live = !!lease && isLeaseLive(lease) && lease.target === name;
-  push('lease', live, live ? `${lease!.id} until ${lease!.expiresAt}` : `none open for "${name}" (peephole open ${name} --reason ...)`);
+  push('lease', live, live ? `${lease!.id} until ${lease!.expiresAt}` : `none open for "${name}" (daypass open ${name} --reason ...)`);
 
   if (live && port === 'open') {
     try {
@@ -82,7 +82,7 @@ export async function doctor(targetName?: string): Promise<Check[]> {
       push('db login', true, `as ${row.current_user}; read_only=${row.ro}; ${String(row.version).split(',')[0]}`);
       if (row.ro !== 'on') push('read-only', false, 'session is NOT read-only — check role settings');
       try {
-        await pool.query('create temp table peephole_doctor_probe(x int)');
+        await pool.query('create temp table daypass_doctor_probe(x int)');
         push('write blocked', false, 'CREATE TEMP TABLE succeeded — role is not read-only!');
       } catch {
         push('write blocked', true, 'write attempt rejected, as it should be');

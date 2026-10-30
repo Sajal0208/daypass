@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^mcp__(plugin_peephole_)?peephole__query$",
+        "matcher": "^mcp__(plugin_daypass_)?daypass__query$",
         "hooks": [
           {
             "type": "command",

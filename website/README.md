@@ -1,6 +1,6 @@
-# Peephole website
+# Daypass website
 
-The site and docs for [`peephole-db`](https://github.com/Sajal0208/peephole), built with
+The site and docs for [`daypass`](https://github.com/Sajal0208/daypass), built with
 [Astro](https://astro.build) and [Starlight](https://starlight.astro.build), styled with
 Tailwind 4. It is its own npm project; the root `npm test` and `npm run build` do not touch it,
 and it is excluded from the published npm tarball.
@@ -96,7 +96,7 @@ tags point at `PUBLIC_SITE_URL`, which is a placeholder until a domain is live).
 
 | Variable                  | Purpose                                                                                                   |
 | ------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `PUBLIC_SITE_URL`         | Canonical site origin for `<link rel=canonical>`, the sitemap and `robots.txt`. Defaults to `https://peepholedb.com` (placeholder until a domain is chosen; recommended, not yet registered). |
+| `PUBLIC_SITE_URL`         | Canonical site origin for `<link rel=canonical>`, the sitemap and `robots.txt`. Defaults to `https://daypass.sh` (placeholder until a domain is chosen; recommended, not yet registered). |
 | `PUBLIC_PLAUSIBLE_DOMAIN` | When set, the Plausible script is injected with this `data-domain`. Unset by default, so local and preview builds send nothing. |
 
 Both are read at build time only.

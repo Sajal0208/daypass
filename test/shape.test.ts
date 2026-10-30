@@ -3,10 +3,10 @@ import { wrapWithLimit, shapeRows } from '../src/core/shape.js';
 
 describe('wrapWithLimit', () => {
   it('wraps a select and asks for one extra row', () => {
-    expect(wrapWithLimit('select 1', 500)).toBe('SELECT * FROM (select 1) peephole_q LIMIT 501');
+    expect(wrapWithLimit('select 1', 500)).toBe('SELECT * FROM (select 1) daypass_q LIMIT 501');
   });
   it('strips a trailing semicolon', () => {
-    expect(wrapWithLimit('select 1 ;', 10)).toBe('SELECT * FROM (select 1) peephole_q LIMIT 11');
+    expect(wrapWithLimit('select 1 ;', 10)).toBe('SELECT * FROM (select 1) daypass_q LIMIT 11');
   });
 });
 

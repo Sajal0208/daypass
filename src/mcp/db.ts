@@ -5,7 +5,7 @@ import { fromIni } from '@aws-sdk/credential-providers';
 import type { ResolvedTarget, TargetConfig } from './state.js';
 
 const TOKEN_TTL_MS = 10 * 60_000; // RDS tokens last 15 min; refresh well before that.
-/** Query time cap. Keep low while Peephole points at the live instance; raise once it has a read replica. */
+/** Query time cap. Keep low while Daypass points at the live instance; raise once it has a read replica. */
 export const STATEMENT_TIMEOUT_MS = 10_000;
 
 /** AWS RDS global CA bundle, shipped with the package (https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem). */
@@ -78,7 +78,7 @@ export async function getPool(name: string, t: ResolvedTarget): Promise<pg.Pool>
       max: 2,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
-      application_name: 'peephole',
+      application_name: 'daypass',
       options:
         `-c default_transaction_read_only=on -c statement_timeout=${STATEMENT_TIMEOUT_MS} -c idle_in_transaction_session_timeout=30000 -c lock_timeout=1000`,
     });

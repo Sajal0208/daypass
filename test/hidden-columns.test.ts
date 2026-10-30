@@ -6,12 +6,12 @@ import { parsePrismaColumns, parseHiddenFile, diffHidden } from '../src/core/ind
 /**
  * Keeps your hidden-column list honest against a Prisma schema: every hidden (or `!` allowed)
  * column must exist, and every sensitive-looking column must be hidden or allowed. Same check as
- * `peephole hidden check --file hidden-columns.txt --prisma prisma/schema.prisma`.
- *   PEEPHOLE_HIDDEN_FILE=hidden-columns.txt PEEPHOLE_PRISMA_SCHEMA=prisma/schema.prisma npm test
+ * `daypass hidden check --file hidden-columns.txt --prisma prisma/schema.prisma`.
+ *   DAYPASS_HIDDEN_FILE=hidden-columns.txt DAYPASS_PRISMA_SCHEMA=prisma/schema.prisma npm test
  * Skipped when either env var is unset.
  */
-const HIDDEN = process.env.PEEPHOLE_HIDDEN_FILE ? resolve(process.env.PEEPHOLE_HIDDEN_FILE) : '';
-const SCHEMA = process.env.PEEPHOLE_PRISMA_SCHEMA ? resolve(process.env.PEEPHOLE_PRISMA_SCHEMA) : '';
+const HIDDEN = process.env.DAYPASS_HIDDEN_FILE ? resolve(process.env.DAYPASS_HIDDEN_FILE) : '';
+const SCHEMA = process.env.DAYPASS_PRISMA_SCHEMA ? resolve(process.env.DAYPASS_PRISMA_SCHEMA) : '';
 
 const enabled = !!HIDDEN && !!SCHEMA && existsSync(SCHEMA) && existsSync(HIDDEN);
 

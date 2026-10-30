@@ -1,23 +1,23 @@
 # Prisma check
 
-If your schema lives in `prisma/schema.prisma`, Peephole's own test suite can check your hidden list against it: every listed column (hidden or `!` allowed) must exist, and every column whose name looks like a phone, email, secret, token, password hash or transcript must be hidden or allowed. The test is skipped unless two environment variables point it at your files, so it costs nothing in Peephole's own CI and runs in yours when you want it to. The same check is also available as `peephole hidden check`.
+If your schema lives in `prisma/schema.prisma`, Daypass's own test suite can check your hidden list against it: every listed column (hidden or `!` allowed) must exist, and every column whose name looks like a phone, email, secret, token, password hash or transcript must be hidden or allowed. The test is skipped unless two environment variables point it at your files, so it costs nothing in Daypass's own CI and runs in yours when you want it to. The same check is also available as `daypass hidden check`.
 
 ## Run it by hand
 
-From a checkout of the Peephole repo:
+From a checkout of the Daypass repo:
 
 ```bash
-PEEPHOLE_HIDDEN_FILE=/path/to/app/hidden-columns.txt \
-PEEPHOLE_PRISMA_SCHEMA=/path/to/app/prisma/schema.prisma \
+DAYPASS_HIDDEN_FILE=/path/to/app/hidden-columns.txt \
+DAYPASS_PRISMA_SCHEMA=/path/to/app/prisma/schema.prisma \
 npm test
 ```
 
 The test, `test/hidden-columns.test.ts`, uses the same core functions as the CLI (`parsePrismaColumns`, `parseHiddenFile`, `diffHidden` from `src/core/hidden.ts`): it parses `model` blocks, honours `@@map` and `@map` so it compares database names rather than Prisma field names, scans every scalar field of every model (relation fields are skipped), understands `!` allow lines, and reports in two assertions:
 
-- `every hidden or allowed column exists in the schema`: fails with the list of entries that no longer match a column. These would stop `peephole sql | psql` with `hidden column "…" does not exist`.
+- `every hidden or allowed column exists in the schema`: fails with the list of entries that no longer match a column. These would stop `daypass sql | psql` with `hidden column "…" does not exist`.
 - `every sensitive-looking column is hidden or allowed`: fails with the list of columns whose name matches the sensitive pattern but is on neither a hidden nor a `!` line.
 
-Fix the list, or, for a false positive, record the decision as an allow line (`!servers.address`, see [Hidden columns](hidden-columns.md)); both the test and `peephole hidden check` then stop flagging it.
+Fix the list, or, for a false positive, record the decision as an allow line (`!servers.address`, see [Hidden columns](hidden-columns.md)); both the test and `daypass hidden check` then stop flagging it.
 
 Without the variables, `npm test` reports those two tests as skipped.
 
@@ -26,17 +26,17 @@ Without the variables, `npm test` reports those two tests as skipped.
 The installed package exposes the same logic without a checkout:
 
 ```bash
-peephole hidden check --file hidden-columns.txt --prisma prisma/schema.prisma
+daypass hidden check --file hidden-columns.txt --prisma prisma/schema.prisma
 ```
 
 It prints the `Listed (hidden or !allowed) but not in the schema` and `Sensitive-looking but not hidden` lists and exits 1 if either is non-empty. `--live <target>` and `--url "$OWNER_URL"` do the same against a running database instead of the Prisma file, which also catches tables that were created outside Prisma. See [Hidden columns](hidden-columns.md).
 
 ## In your app's CI
 
-Add a job to the repo that owns the schema and the hidden list. It needs Node 20+ and nothing else. The CLI form is the shortest; save it as `.github/workflows/peephole-hidden.yml`:
+Add a job to the repo that owns the schema and the hidden list. It needs Node 20+ and nothing else. The CLI form is the shortest; save it as `.github/workflows/daypass-hidden.yml`:
 
 ```yaml
-name: peephole hidden list
+name: daypass hidden list
 on:
   pull_request:
     paths:
@@ -50,13 +50,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm install -g peephole-db
-      - run: peephole hidden check --file hidden-columns.txt --prisma prisma/schema.prisma
+      - run: npm install -g daypass
+      - run: daypass hidden check --file hidden-columns.txt --prisma prisma/schema.prisma
 ```
 
-If you prefer the vitest form (for example to pin Peephole's version through a lockfile), check out Peephole as a second repository and run its `npm test` with the two variables set to absolute paths in your checkout.
+If you prefer the vitest form (for example to pin Daypass's version through a lockfile), check out Daypass as a second repository and run its `npm test` with the two variables set to absolute paths in your checkout.
 
-The job tells you the list is out of date. It does not apply anything. After it passes, someone with owner rights still has to run `peephole sql --hide-file hidden-columns.txt | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1` against each database.
+The job tells you the list is out of date. It does not apply anything. After it passes, someone with owner rights still has to run `daypass sql --hide-file hidden-columns.txt | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1` against each database.
 
 ## What the heuristic matches
 

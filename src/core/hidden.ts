@@ -1,5 +1,5 @@
 /**
- * Pure helpers behind `peephole hidden suggest|check`: a name heuristic for personal or
+ * Pure helpers behind `daypass hidden suggest|check`: a name heuristic for personal or
  * secret columns, a Prisma schema reader, and the hidden-list diff. No I/O here.
  */
 

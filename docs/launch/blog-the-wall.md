@@ -1,7 +1,7 @@
 # We gave Claude read access to prod. Here is the wall we built.
 
-_Peephole is open source under MIT: https://github.com/Sajal0208/peephole,
-`npm install -g peephole-db`. This post is about the design, and about the first draft
+_Daypass is open source under MIT: https://github.com/Sajal0208/daypass,
+`npm install -g daypass`. This post is about the design, and about the first draft
 that was wrong._
 
 ## Why we wanted it
@@ -24,8 +24,8 @@ record.
 The first version of the role setup hid PII like this:
 
 ```sql
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO peephole_ro;
-REVOKE SELECT (email, phone) ON users FROM peephole_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO daypass_ro;
+REVOKE SELECT (email, phone) ON users FROM daypass_ro;
 ```
 
 It runs without error and hides nothing. Postgres checks the table-level privilege
@@ -38,8 +38,8 @@ table with a hidden column, drop the table-level grant and grant the visible col
 name.
 
 ```sql
-REVOKE SELECT ON TABLE public.users FROM peephole_ro;
-GRANT SELECT (id, created_at, plan, country) ON TABLE public.users TO peephole_ro;
+REVOKE SELECT ON TABLE public.users FROM daypass_ro;
+GRANT SELECT (id, created_at, plan, country) ON TABLE public.users TO daypass_ro;
 ```
 
 `sql/setup-role.sql` generates that from a plain list:
@@ -66,18 +66,18 @@ Each layer is enough for the job it has. All run together. The first two are the
 they alone make writes to your tables impossible. The other three are fences: they limit blast radius,
 cost and context size, but none stops a write by itself.
 
-**1. The database role.** `peephole_ro` has `SELECT` on visible columns only, as above.
+**1. The database role.** `daypass_ro` has `SELECT` on visible columns only, as above.
 `NOCREATEDB`, `NOCREATEROLE`, `NOINHERIT`, `CONNECTION LIMIT 5`, no password.
 
 **2. Role settings.** `ALTER ROLE ... SET`, so they apply to every session the role opens:
 `default_transaction_read_only = on`, `statement_timeout = '10s'`,
 `idle_in_transaction_session_timeout = '30s'`, `lock_timeout = '1s'`,
-`temp_file_limit = '256MB'`. Ten seconds is short because Peephole reads the live primary
+`temp_file_limit = '256MB'`. Ten seconds is short because Daypass reads the live primary
 today.
 
 **3. Temporary credentials.** On RDS the role gets `GRANT rds_iam` and logs in with a
 15-minute IAM token minted from the user's own AWS login. Nothing to paste, store or
-rotate. Lose AWS access, lose Peephole access. TLS is always verified and RDS targets pin
+rotate. Lose AWS access, lose Daypass access. TLS is always verified and RDS targets pin
 the bundled AWS RDS CA, so a fake endpoint cannot collect the token or the rows. The
 config holds no secret:
 
@@ -87,7 +87,7 @@ config holds no secret:
     "prod": {
       "host": "my-db.abc123.eu-central-1.rds.amazonaws.com",
       "database": "app",
-      "user": "peephole_ro",
+      "user": "daypass_ro",
       "region": "eu-central-1",
       "securityGroupId": "sg-xxxxxxxxxxxxxxxxx"   // optional: per-lease IP rule
     }
@@ -112,13 +112,13 @@ Blocked: Function pg_sleep() is not allowed
 We used the real parser rather than a regex because a regex is the kind of clever part we
 get wrong. `pg_catalog.pg_sleep(10)` and `pg_sleep` in a subquery are ordinary test cases.
 
-**5. Result limits.** The query is wrapped as `SELECT * FROM (<sql>) peephole_q LIMIT 501`,
+**5. Result limits.** The query is wrapped as `SELECT * FROM (<sql>) daypass_q LIMIT 501`,
 so the server can tell "exactly 500" from "more than 500". Cells are cut at 2 KB, the
 result at 1 MB. One query cannot flood the model's context.
 
-Around the layers is the lease. `peephole open prod --ttl 45m --reason "debug campaign
+Around the layers is the lease. `daypass open prod --ttl 45m --reason "debug campaign
 1234"` writes a lease file; every tool checks it first and refuses when it is missing or
-expired. Every call appends one JSON line to `~/.peephole/audit.jsonl`:
+expired. Every call appends one JSON line to `~/.daypass/audit.jsonl`:
 
 ```json
 {"at":"2026-10-28T14:21:07.312Z","who":"arn:aws:iam::123456789012:user/alice","leaseId":"3f9a1c2e","target":"prod","reason":"debug campaign 1234","tool":"query","sql":"select id, status, created_at from calls where campaign_id = 1234 order by created_at desc limit 50","allowed":true,"rows":50,"ms":41}
@@ -159,7 +159,7 @@ The `REVOKE` draft is the big one. Two more came out of the same review. The sta
 timeout was 30 s in the first draft and is 10 s now, because the reads hit the primary
 and a 30 s scan is a real cost to live traffic. And lease expiry alone did not call AWS,
 so an expired lease could leave its IP rule in the security group; the MCP server now
-revokes the rule the first time it sees an expired lease, and `peephole sweep` from cron
+revokes the rule the first time it sees an expired lease, and `daypass sweep` from cron
 is the backstop.
 
 The first run against RDS failed at the `ALTER ROLE` line. The script said `NOSUPERUSER
@@ -196,9 +196,9 @@ The known limits today: the audit file can hold PII, a shared AWS identity makes
 anonymous, tables created after setup are visible until the SQL is re-run, and it is
 Postgres only.
 
-If you can get `peephole_ro` to read a hidden column or write anything, that is the bug
+If you can get `daypass_ro` to read a hidden column or write anything, that is the bug
 we most want to hear about. SECURITY.md has the address. Please do not open an issue for
 it.
 
-Code: https://github.com/Sajal0208/peephole. Package:
-https://www.npmjs.com/package/peephole-db. Site: <SITE_URL>.
+Code: https://github.com/Sajal0208/daypass. Package:
+https://www.npmjs.com/package/daypass. Site: <SITE_URL>.

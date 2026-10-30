@@ -1,4 +1,4 @@
-# Launch material for peephole-db 0.1.0
+# Launch material for daypass 0.1.0
 
 Everything in this folder is a draft to paste at posting time. Nothing here is published
 by itself.
@@ -11,14 +11,14 @@ by itself.
       `123456789012` account placeholder and the README's own placeholder host
       `my-db.abc123.eu-central-1.rds.amazonaws.com`, or nothing. No real host, account,
       security group, ARN or internal table name goes into a post.
-- [ ] `npm view peephole-db version` prints `0.1.0` and `npm install -g peephole-db` works on a
+- [ ] `npm view daypass version` prints `0.1.0` and `npm install -g daypass` works on a
       clean machine.
 - [ ] The GitHub release `v0.1.0` exists with `release-notes-v0.1.0.md` as its body.
-- [ ] The Claude Code plugin installs with `/plugin marketplace add Sajal0208/peephole` then
-      `/plugin install peephole@peephole`, and `claude plugin eval` passes all three cases.
-- [ ] `peephole hidden suggest` runs against a Prisma schema and against a live catalog.
-- [ ] The GIF for X post 1 is recorded: `peephole open`, one question in Claude Code, one
-      `SELECT *` that fails on a hidden column, `peephole log`.
+- [ ] The Claude Code plugin installs with `/plugin marketplace add Sajal0208/daypass` then
+      `/plugin install daypass@daypass`, and `claude plugin eval` passes all three cases.
+- [ ] `daypass hidden suggest` runs against a Prisma schema and against a live catalog.
+- [ ] The GIF for X post 1 is recorded: `daypass open`, one question in Claude Code, one
+      `SELECT *` that fails on a hidden column, `daypass log`.
 - [ ] `security@vocobase.com` is monitored. SECURITY.md promises a reply within 3 working days.
 - [ ] Someone is free to answer comments for the first 6 hours after the Show HN goes up.
 
@@ -26,8 +26,8 @@ by itself.
 
 1. **GitHub release** `v0.1.0`: `release-notes-v0.1.0.md`. Do this first so every other post
    links to something that exists.
-2. **Show HN**: `show-hn.md`. Tuesday to Thursday, 14:00–16:00 UTC. Title is 79 characters
-   (HN's limit is 80; "for AI coding agents" would make it 86, so the title says "for AI
+2. **Show HN**: `show-hn.md`. Tuesday to Thursday, 14:00–16:00 UTC. Title is 78 characters
+   (HN's limit is 80; "for AI coding agents" would make it 85, so the title says "for AI
    agents"). Do not ask anyone to upvote.
 3. **X thread**: `x-thread.md`, within an hour of the HN post. Post 1 carries the GIF.
 4. **r/PostgreSQL**: `reddit-postgresql.md`, same day. It asks for a review of

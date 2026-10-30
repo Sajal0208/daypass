@@ -7,28 +7,28 @@ Five minutes from `npm install` to Claude Code answering a question from your da
 Needs Node 20 or newer, and `psql` for the role setup step.
 
 ```bash
-npm install -g peephole-db
-peephole --version
+npm install -g daypass
+daypass --version
 ```
 
 ## 2. Create the config
 
 ```bash
-peephole init
+daypass init
 ```
 
 ```
-Wrote ~/.peephole/config.json
-Next: edit it, run the role setup (peephole sql | psql ...), then: peephole open prod --reason "..."
+Wrote ~/.daypass/config.json
+Next: edit it, run the role setup (daypass sql | psql ...), then: daypass open prod --reason "..."
 ```
 
-Open `~/.peephole/config.json` and replace its contents with one target. The URL form works for any Postgres. The user is the read-only role that step 4 creates; the password is the one you set in step 4.
+Open `~/.daypass/config.json` and replace its contents with one target. The URL form works for any Postgres. The user is the read-only role that step 4 creates; the password is the one you set in step 4.
 
 ```json
 {
   "targets": {
     "staging": {
-      "url": "postgres://peephole_ro:CHANGE-ME@staging-db.example.com:5432/app"
+      "url": "postgres://daypass_ro:CHANGE-ME@staging-db.example.com:5432/app"
     }
   }
 }
@@ -42,11 +42,11 @@ This step and the next run as the database owner, so they use a different URL. K
 
 ```bash
 export OWNER_URL='postgres://postgres:CHANGE-ME@staging-db.example.com:5432/app'
-peephole hidden suggest --url "$OWNER_URL" > hidden-columns.txt
+daypass hidden suggest --url "$OWNER_URL" > hidden-columns.txt
 cat hidden-columns.txt
 ```
 
-The command reads every column name from the live database and prints the ones that look like personal data or secrets: phones, emails, tokens, password hashes, transcripts and so on. It prints a `#` comment header first, then one `table.column` per line, and a one-line summary on stderr. Review the list. Add what it missed; for a column it got wrong, keep the line and prefix it with `!` (`!servers.address`): `peephole hidden check` then treats it as reviewed and stops flagging it, and `peephole sql` ignores the line. A typical result:
+The command reads every column name from the live database and prints the ones that look like personal data or secrets: phones, emails, tokens, password hashes, transcripts and so on. It prints a `#` comment header first, then one `table.column` per line, and a one-line summary on stderr. Review the list. Add what it missed; for a column it got wrong, keep the line and prefix it with `!` (`!servers.address`): `daypass hidden check` then treats it as reviewed and stops flagging it, and `daypass sql` ignores the line. A typical result:
 
 ```
 customers.email
@@ -57,10 +57,10 @@ customers.secret
 
 ## 4. Create the read-only role
 
-`peephole sql` prints the one-time setup SQL with your hidden list baked in. Pipe it into `psql` as the owner.
+`daypass sql` prints the one-time setup SQL with your hidden list baked in. Pipe it into `psql` as the owner.
 
 ```bash
-peephole sql --hide-file hidden-columns.txt | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1
+daypass sql --hide-file hidden-columns.txt | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1
 ```
 
 ```
@@ -77,17 +77,17 @@ NOTICE:  hidden columns verified: 2 columns across 1 tables
 DO
    rolname   | rolconnlimit |                                     rolconfig
 -------------+--------------+------------------------------------------------------------------------------------
- peephole_ro |            5 | {default_transaction_read_only=on,statement_timeout=10s,idle_in_transaction_session_timeout=30s,lock_timeout=1s,temp_file_limit=256MB}
+ daypass_ro |            5 | {default_transaction_read_only=on,statement_timeout=10s,idle_in_transaction_session_timeout=30s,lock_timeout=1s,temp_file_limit=256MB}
 (1 row)
 ...
 ```
 
 The `NOTICE` about `rds_iam` is expected outside AWS; the owner report follows the role row. The script runs as one transaction and ends with a self-check, so if a hidden column is still readable nothing is applied (`-X` skips your psqlrc).
 
-The role is created without a password, and re-runs leave the password alone. Set one now, and put the same value in the URL in `~/.peephole/config.json`:
+The role is created without a password, and re-runs leave the password alone. Set one now, and put the same value in the URL in `~/.daypass/config.json`:
 
 ```bash
-psql "$OWNER_URL" -c "ALTER ROLE peephole_ro PASSWORD 'CHANGE-ME'"
+psql "$OWNER_URL" -c "ALTER ROLE daypass_ro PASSWORD 'CHANGE-ME'"
 ```
 
 ## 5. Connect Claude Code
@@ -95,36 +95,36 @@ psql "$OWNER_URL" -c "ALTER ROLE peephole_ro PASSWORD 'CHANGE-ME'"
 Once, for all projects:
 
 ```bash
-claude mcp add --scope user peephole -- peephole mcp
+claude mcp add --scope user daypass -- daypass mcp
 ```
 
-Or install the [Claude Code plugin](plugin.md), which, once installed, registers the MCP server for you and adds a skill that teaches Claude how to use the tools. Any other MCP client works too: the server is `peephole mcp` over stdio.
+Or install the [Claude Code plugin](plugin.md), which, once installed, registers the MCP server for you and adds a skill that teaches Claude how to use the tools. Any other MCP client works too: the server is `daypass mcp` over stdio.
 
 ## 6. Open a lease
 
 ```bash
-peephole open staging --ttl 30m --reason "why did signups drop on Monday"
+daypass open staging --ttl 30m --reason "why did signups drop on Monday"
 ```
 
 ```
 Lease 85d19374 open on "staging" until 2026-10-29T14:46:59.226Z (30m). Reason: why did signups drop on Monday
-Your AI session can now use the peephole MCP tools. Close early with: peephole close
+Your AI session can now use the daypass MCP tools. Close early with: daypass close
 ```
 
 Check the whole chain before you ask the agent anything:
 
 ```bash
-peephole doctor staging
+daypass doctor staging
 ```
 
 ```
 ✔ node >= 20       v25.0.0
-✔ config           ~/.peephole/config.json (staging)
-✔ target           staging: peephole_ro@localhost:5445/postgres via password
+✔ config           ~/.daypass/config.json (staging)
+✔ target           staging: daypass_ro@localhost:5445/postgres via password
 ✔ dns              localhost → ::1
 ✔ tcp              localhost:5445 open
 ✔ lease            85d19374 until 2026-10-29T14:46:59.226Z
-✔ db login         as peephole_ro; read_only=on; PostgreSQL 16.14 (Debian 16.14-1.pgdg13+1) on aarch64-unknown-linux-gnu
+✔ db login         as daypass_ro; read_only=on; PostgreSQL 16.14 (Debian 16.14-1.pgdg13+1) on aarch64-unknown-linux-gnu
 ✔ write blocked    write attempt rejected, as it should be
 ```
 
@@ -134,9 +134,9 @@ A ✖ on any line: see [Troubleshooting](troubleshooting.md).
 
 In Claude Code, ask something that needs the database:
 
-> Using peephole, how many orders were paid yesterday, and which customers placed them?
+> Using daypass, how many orders were paid yesterday, and which customers placed them?
 
-Typically, Claude calls `peephole_status`, then `list_tables` and `describe_table` to learn the shape, then `query`. A `query` result looks like this to the model:
+Typically, Claude calls `daypass_status`, then `list_tables` and `describe_table` to learn the shape, then `query`. A `query` result looks like this to the model:
 
 ```
 1 row(s), 2 ms, lease 30 min left
@@ -148,10 +148,10 @@ If it tries `SELECT *` on a table with hidden columns, Postgres refuses (`permis
 
 ## 8. Read the log
 
-Every tool call is one line in `~/.peephole/audit.jsonl`. `peephole log` prints the recent ones:
+Every tool call is one line in `~/.daypass/audit.jsonl`. `daypass log` prints the recent ones:
 
 ```bash
-peephole log -n 5
+daypass log -n 5
 ```
 
 ```
@@ -167,7 +167,7 @@ peephole log -n 5
 When you are done, or just let it expire:
 
 ```bash
-peephole close
+daypass close
 ```
 
 ## Next

@@ -1,6 +1,6 @@
 # Security policy
 
-Peephole exists to put a wall between an AI agent and a production database. A hole in that
+Daypass exists to put a wall between an AI agent and a production database. A hole in that
 wall matters more than any other bug.
 
 ## Reporting a vulnerability
@@ -19,7 +19,7 @@ not to be named.
 
 ## Scope
 
-In scope: the `peephole-db` package, `sql/setup-role.sql`, the MCP server and CLI.
+In scope: the `daypass` package, `sql/setup-role.sql`, the MCP server and CLI.
 
 Out of scope: your own database configuration (e.g. forgetting to list a column in the hidden
 list), weaknesses in Postgres or AWS themselves, and denial of service against your own database
@@ -29,7 +29,7 @@ for; tune them).
 ## Design notes for reviewers
 
 The database role is the wall; everything in the client is a second fence. If you can show that
-`peephole_ro`, set up by `setup-role.sql`, can read a hidden column or write anything, that is a
+`daypass_ro`, set up by `setup-role.sql`, can read a hidden column or write anything, that is a
 critical issue even if the client would have blocked the statement.
 
 Known limits are listed in `docs/threat-model.md`.

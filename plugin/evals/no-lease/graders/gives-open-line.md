@@ -1,4 +1,4 @@
 ---
 type: regex
-pattern: 'peephole open \S+ --ttl \S+ --reason "[^"]+"'
+pattern: 'daypass open \S+ --ttl \S+ --reason "[^"]+"'
 ---

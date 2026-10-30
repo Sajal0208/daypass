@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { decide, looksSensitive as hookLooksSensitive } from '../plugin/hooks/pii-guard.mjs';
 import { looksSensitive as coreLooksSensitive } from '../src/core/hidden.js';
 
-const PATH = '/home/me/.peephole/hidden-columns.txt';
-const env = (extra: Record<string, string> = {}) => ({ PEEPHOLE_HIDDEN_FILE: PATH, ...extra });
+const PATH = '/home/me/.daypass/hidden-columns.txt';
+const env = (extra: Record<string, string> = {}) => ({ DAYPASS_HIDDEN_FILE: PATH, ...extra });
 
 describe('decide', () => {
   it('allows a query with no sensitive-looking identifier', () => {
@@ -20,8 +20,8 @@ describe('decide', () => {
     if (r.allow) return;
     expect(r.reason).toContain('no hidden-columns list');
     expect(r.reason).toContain(PATH);
-    expect(r.reason).toContain('peephole hidden suggest --live');
-    expect(r.reason).toContain('https://github.com/Sajal0208/peephole/blob/main/docs/hidden-columns.md');
+    expect(r.reason).toContain('daypass hidden suggest --live');
+    expect(r.reason).toContain('https://github.com/Sajal0208/daypass/blob/main/docs/hidden-columns.md');
     expect(r.reason).toContain('Tell the user:');
   });
 
@@ -47,9 +47,9 @@ describe('decide', () => {
     expect(r.reason).toContain(PATH);
     expect(r.reason).toContain('"<table>.phone"');
     expect(r.reason).toContain('"!<table>.phone"');
-    expect(r.reason).toContain('PEEPHOLE_PII_HOOK=off');
+    expect(r.reason).toContain('DAYPASS_PII_HOOK=off');
     expect(r.reason).toContain('Tell the user:');
-    expect(r.reason).toContain('have the database owner re-run peephole sql --hide-file ' + PATH);
+    expect(r.reason).toContain('have the database owner re-run daypass sql --hide-file ' + PATH);
   });
 
   it('allows a sensitive identifier that the list hides', () => {
@@ -88,8 +88,8 @@ describe('decide', () => {
     expect(decide(sql, '', env())).toEqual({ allow: true });
   });
 
-  it('is disabled by PEEPHOLE_PII_HOOK=off, even without a list', () => {
-    expect(decide('select phone, password_hash from users', null, env({ PEEPHOLE_PII_HOOK: 'off' }))).toEqual({ allow: true });
+  it('is disabled by DAYPASS_PII_HOOK=off, even without a list', () => {
+    expect(decide('select phone, password_hash from users', null, env({ DAYPASS_PII_HOOK: 'off' }))).toEqual({ allow: true });
   });
 
   it('never flags SQL keywords such as count', () => {
@@ -103,11 +103,11 @@ describe('decide', () => {
     expect(r.reason).toContain('"phoneNumber"');
   });
 
-  it('falls back to ~/.peephole/hidden-columns.txt when PEEPHOLE_HIDDEN_FILE is unset', () => {
+  it('falls back to ~/.daypass/hidden-columns.txt when DAYPASS_HIDDEN_FILE is unset', () => {
     const r = decide('select phone from users', null, {});
     expect(r.allow).toBe(false);
     if (r.allow) return;
-    expect(r.reason).toMatch(/\.peephole\/hidden-columns\.txt/);
+    expect(r.reason).toMatch(/\.daypass\/hidden-columns\.txt/);
   });
 });
 
@@ -128,7 +128,7 @@ describe('looksSensitive parity with src/core/hidden.ts', () => {
 describe('end to end (stdin -> exit code)', () => {
   const tmpDirs: string[] = [];
   const tmp = () => {
-    const d = mkdtempSync(join(tmpdir(), 'peephole-hook-'));
+    const d = mkdtempSync(join(tmpdir(), 'daypass-hook-'));
     tmpDirs.push(d);
     return d;
   };
@@ -138,15 +138,15 @@ describe('end to end (stdin -> exit code)', () => {
   const runRaw = (stdin: string, extraEnv: Record<string, string>) =>
     spawnSync('node', ['plugin/hooks/pii-guard.mjs'], {
       input: stdin,
-      // PEEPHOLE_PII_HOOK is cleared so a developer's own shell setting cannot turn the guard off here.
-      env: { ...process.env, PEEPHOLE_PII_HOOK: '', ...extraEnv },
+      // DAYPASS_PII_HOOK is cleared so a developer's own shell setting cannot turn the guard off here.
+      env: { ...process.env, DAYPASS_PII_HOOK: '', ...extraEnv },
       encoding: 'utf8',
     });
   const run = (sql: string | undefined, extraEnv: Record<string, string>) =>
-    runRaw(JSON.stringify({ tool_name: 'mcp__plugin_peephole_peephole__query', tool_input: sql === undefined ? {} : { sql } }), extraEnv);
+    runRaw(JSON.stringify({ tool_name: 'mcp__plugin_daypass_daypass__query', tool_input: sql === undefined ? {} : { sql } }), extraEnv);
 
   it('exits 2 with the reason on stderr when there is no list', () => {
-    const r = run('select phone from users', { PEEPHOLE_HIDDEN_FILE: '/nonexistent' });
+    const r = run('select phone from users', { DAYPASS_HIDDEN_FILE: '/nonexistent' });
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('no hidden-columns list');
     expect(r.stdout).toBe('');
@@ -155,13 +155,13 @@ describe('end to end (stdin -> exit code)', () => {
   it('exits 0 when the list covers the column', () => {
     const file = join(tmp(), 'hidden-columns.txt');
     writeFileSync(file, 'users.phone\n');
-    const r = run('select phone from users', { PEEPHOLE_HIDDEN_FILE: file });
+    const r = run('select phone from users', { DAYPASS_HIDDEN_FILE: file });
     expect(r.status).toBe(0);
     expect(r.stderr).toBe('');
   });
 
   it('exits 2 with "cannot read" when the list path is a directory', () => {
-    const r = run('select phone from users', { PEEPHOLE_HIDDEN_FILE: tmp() });
+    const r = run('select phone from users', { DAYPASS_HIDDEN_FILE: tmp() });
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('cannot read hidden-columns list');
     expect(r.stderr).toContain('EISDIR');
@@ -169,20 +169,20 @@ describe('end to end (stdin -> exit code)', () => {
   });
 
   it('exits 1 (non-blocking) with a notice when tool_input has no sql', () => {
-    const r = run(undefined, { PEEPHOLE_HIDDEN_FILE: '/nonexistent' });
+    const r = run(undefined, { DAYPASS_HIDDEN_FILE: '/nonexistent' });
     expect(r.status).toBe(1);
-    expect(r.stderr).toBe('Peephole PII guard: no "sql" in tool input, not checked\n');
+    expect(r.stderr).toBe('Daypass PII guard: no "sql" in tool input, not checked\n');
     expect(r.stdout).toBe('');
   });
 
   it('exits 0 silently on stdin that is not JSON', () => {
-    const r = runRaw('not json', { PEEPHOLE_HIDDEN_FILE: '/nonexistent' });
+    const r = runRaw('not json', { DAYPASS_HIDDEN_FILE: '/nonexistent' });
     expect(r.status).toBe(0);
     expect(r.stderr).toBe('');
   });
 
   it('exits 0 silently when there is no tool_input object', () => {
-    const r = runRaw(JSON.stringify({ tool_name: 'mcp__plugin_peephole_peephole__query' }), { PEEPHOLE_HIDDEN_FILE: '/nonexistent' });
+    const r = runRaw(JSON.stringify({ tool_name: 'mcp__plugin_daypass_daypass__query' }), { DAYPASS_HIDDEN_FILE: '/nonexistent' });
     expect(r.status).toBe(0);
     expect(r.stderr).toBe('');
   });

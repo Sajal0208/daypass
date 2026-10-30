@@ -1,5 +1,5 @@
 name: Feature request
-description: Something Peephole should do
+description: Something Daypass should do
 labels: [enhancement]
 body:
   - type: textarea

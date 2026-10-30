@@ -136,7 +136,7 @@ describe.skipIf(process.platform === 'win32')('scripts/scrub-check.sh', () => {
   });
 
   it('accepts an ARN with the documented placeholder account', () => {
-    write('policy.json', '{ "Resource": "arn:aws:iam::123456789012:role/peephole" }\n');
+    write('policy.json', '{ "Resource": "arn:aws:iam::123456789012:role/daypass" }\n');
     commit('add policy');
     expect(scrub().status).toBe(0);
   });

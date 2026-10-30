@@ -13,15 +13,15 @@ client side is an MCP server; the part I want this sub to look at is the role. T
 setup script is about 110 lines of SQL and I would rather hear about a hole here than from an
 agent.
 
-Repo: https://github.com/Sajal0208/peephole. Script: `sql/setup-role.sql`. MIT.
+Repo: https://github.com/Sajal0208/daypass. Script: `sql/setup-role.sql`. MIT.
 
 ### The gotcha that shaped the script
 
 The first draft hid PII columns like this:
 
 ```sql
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO peephole_ro;
-REVOKE SELECT (email, phone) ON users FROM peephole_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO daypass_ro;
+REVOKE SELECT (email, phone) ON users FROM daypass_ro;
 ```
 
 That does nothing. Postgres checks table-level privilege first, and the role still holds
@@ -30,8 +30,8 @@ removes a column-level grant that was there before. The script now does, per tab
 has a hidden column:
 
 ```sql
-REVOKE SELECT ON TABLE public.users FROM peephole_ro;
-GRANT SELECT (id, created_at, plan, country) ON TABLE public.users TO peephole_ro;
+REVOKE SELECT ON TABLE public.users FROM daypass_ro;
+GRANT SELECT (id, created_at, plan, country) ON TABLE public.users TO daypass_ro;
 ```
 
 Two consequences we accepted. `SELECT *` on those tables fails with `permission denied`,
@@ -48,12 +48,12 @@ plus a check that the role can still read at least one column on each of those t
 ### Role settings
 
 ```sql
-ALTER ROLE peephole_ro WITH LOGIN NOCREATEDB NOCREATEROLE NOINHERIT CONNECTION LIMIT 5 PASSWORD NULL;
-ALTER ROLE peephole_ro SET default_transaction_read_only = on;
-ALTER ROLE peephole_ro SET statement_timeout = '10s';
-ALTER ROLE peephole_ro SET idle_in_transaction_session_timeout = '30s';
-ALTER ROLE peephole_ro SET lock_timeout = '1s';
-ALTER ROLE peephole_ro SET temp_file_limit = '256MB';
+ALTER ROLE daypass_ro WITH LOGIN NOCREATEDB NOCREATEROLE NOINHERIT CONNECTION LIMIT 5 PASSWORD NULL;
+ALTER ROLE daypass_ro SET default_transaction_read_only = on;
+ALTER ROLE daypass_ro SET statement_timeout = '10s';
+ALTER ROLE daypass_ro SET idle_in_transaction_session_timeout = '30s';
+ALTER ROLE daypass_ro SET lock_timeout = '1s';
+ALTER ROLE daypass_ro SET temp_file_limit = '256MB';
 ```
 
 Notes:
@@ -61,7 +61,7 @@ Notes:
 - `default_transaction_read_only` is a GUC, so the role could `SET` it off. The client
   rejects `SET` (below), and the role has no write grants anyway. If you know a path from
   "role-level read_only plus no write privileges" to a write, I want to hear it.
-- 10 s is short on purpose: Peephole reads the live primary today. Raise it once it points
+- 10 s is short on purpose: Daypass reads the live primary today. Raise it once it points
   at a replica.
 - `CONNECTION LIMIT 5` so a runaway session cannot take the pool.
 - `NOSUPERUSER`, `NOREPLICATION`, `NOBYPASSRLS` are not written out. A new role never has
@@ -102,13 +102,13 @@ timeout stops it; if it let an `UPDATE` through, the role has no `UPDATE` privil
 transaction is read-only. The design rule is that the client never has to be right for the
 database to stay safe.
 
-After the parser: the query is wrapped as `SELECT * FROM (<sql>) peephole_q LIMIT 501`, and
+After the parser: the query is wrapped as `SELECT * FROM (<sql>) daypass_q LIMIT 501`, and
 the result is cut to 500 rows, 2 KB per cell, 1 MB total before the model sees it.
 
 ### What I would like reviewed
 
 1. `sql/setup-role.sql`, top to bottom. It runs as the DB owner or RDS master user with
-   `-v ON_ERROR_STOP=1`. Is there a path for `peephole_ro` to read a hidden column or write
+   `-v ON_ERROR_STOP=1`. Is there a path for `daypass_ro` to read a hidden column or write
    anything? Views, functions with `SECURITY DEFINER`, sequences, RLS and
    `pg_catalog` are the places I am least sure about.
 2. Anything else in `pg_catalog` or `information_schema` that leaks hidden column
@@ -121,7 +121,7 @@ the result is cut to 500 rows, 2 KB per cell, 1 MB total before the model sees i
 
 If what you find weakens the read-only guarantee, SECURITY.md asks for an email to
 security@vocobase.com rather than a public issue. Design notes and the list of known
-limits are in `docs/plans/2026-10-28-peephole-design.md`.
+limits are in `docs/plans/2026-10-28-daypass-design.md`.
 
 On a real production database the setup denied 52 hidden columns, blocked writes and
 enforced lease expiry. That is one database. Yours is different, which is why I am asking.

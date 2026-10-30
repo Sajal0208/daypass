@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "peephole": {
-      "command": "peephole",
+    "daypass": {
+      "command": "daypass",
       "args": ["mcp"]
     }
   }

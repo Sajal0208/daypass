@@ -6,7 +6,7 @@ import {
 } from '@aws-sdk/client-ec2';
 import { fromIni } from '@aws-sdk/credential-providers';
 
-export const RULE_PREFIX = 'peephole:';
+export const RULE_PREFIX = 'daypass:';
 
 function client(region: string, profile?: string) {
   return new EC2Client({ region, ...(profile ? { credentials: fromIni({ profile }) } : {}) });
@@ -57,7 +57,7 @@ export async function revokeRule(o: { region: string; profile?: string; groupId:
   }
 }
 
-/** Removes every peephole:* rule whose "until" timestamp is in the past. Returns the ids removed. */
+/** Removes every daypass:* rule whose "until" timestamp is in the past. Returns the ids removed. */
 export async function sweepExpired(o: { region: string; profile?: string; groupId: string; now?: number }): Promise<string[]> {
   const ec2 = client(o.region, o.profile);
   const now = o.now ?? Date.now();

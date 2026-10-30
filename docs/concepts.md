@@ -1,10 +1,10 @@
 # Concepts
 
-Peephole is five small parts: a lease that says access is open, a guard that reads every statement before it leaves your machine, a database role that cannot write and cannot see the hidden columns, an audit line per tool call, and caps on what a result may contain. This page says what each one is, where it lives on disk, and which numbers it enforces. The role is the wall; everything else is a second fence.
+Daypass is five small parts: a lease that says access is open, a guard that reads every statement before it leaves your machine, a database role that cannot write and cannot see the hidden columns, an audit line per tool call, and caps on what a result may contain. This page says what each one is, where it lives on disk, and which numbers it enforces. The role is the wall; everything else is a second fence.
 
 ## Lease
 
-A lease is a file: `~/.peephole/lease.json` (or `$PEEPHOLE_HOME/lease.json`). `peephole open` writes it, `peephole close` deletes it, and the MCP server reads it at the start of every tool call. No file, or `expiresAt` in the past, and every tool except `peephole_status` returns an error asking the user to run `peephole open` (`peephole_status` returns plain text: `No lease open.` or `Expired at …`).
+A lease is a file: `~/.daypass/lease.json` (or `$DAYPASS_HOME/lease.json`). `daypass open` writes it, `daypass close` deletes it, and the MCP server reads it at the start of every tool call. No file, or `expiresAt` in the past, and every tool except `daypass_status` returns an error asking the user to run `daypass open` (`daypass_status` returns plain text: `No lease open.` or `Expired at …`).
 
 ```json
 {
@@ -19,11 +19,11 @@ A lease is a file: `~/.peephole/lease.json` (or `$PEEPHOLE_HOME/lease.json`). `p
 
 Facts about leases:
 
-- **One per laptop.** Not per Claude session. Every Claude Code window on the machine has the tools while the lease is open. Opening a second one is refused: `A lease is already open (85d19374 on staging, until …). Run: peephole close`.
+- **One per laptop.** Not per Claude session. Every Claude Code window on the machine has the tools while the lease is open. Opening a second one is refused: `A lease is already open (85d19374 on staging, until …). Run: daypass close`.
 - **TTL.** `--ttl` takes `90s`, `30m`, `2h`. Default `60m`, minimum `60s`, maximum `8h`.
 - **Who.** For an AWS RDS target it is the AWS caller ARN from `sts:GetCallerIdentity`, which cannot be set from the shell. For a URL or password target it is `$USER@hostname`.
 - **Reason** is required. It goes into the lease and into every audit line written under it.
-- **Network.** If the target has `region` and `securityGroupId`, `open` adds your public IP as a `/32` rule on that security group and records `ip` and `sgRuleId` in the lease. `close` removes the rule. If a lease expires without `close`, the MCP server removes the rule the first time it sees the expired lease; `peephole sweep <target>` from cron is the backstop. `--no-network` skips all of this.
+- **Network.** If the target has `region` and `securityGroupId`, `open` adds your public IP as a `/32` rule on that security group and records `ip` and `sgRuleId` in the lease. `close` removes the rule. If a lease expires without `close`, the MCP server removes the rule the first time it sees the expired lease; `daypass sweep <target>` from cron is the backstop. `--no-network` skips all of this.
 - **Expiry is checked per call.** A query already running when the lease ends finishes (within the 10 s statement timeout). The next call is refused.
 
 ## Guard
@@ -56,7 +56,7 @@ The guard is not what makes writes impossible. The role is. The guard exists so 
 
 ## Role
 
-`peephole sql` prints `sql/setup-role.sql` with your role name and hidden list filled in. Run as the database owner, it creates the role (default name `peephole_ro`) and sets, at the role level:
+`daypass sql` prints `sql/setup-role.sql` with your role name and hidden list filled in. Run as the database owner, it creates the role (default name `daypass_ro`) and sets, at the role level:
 
 | Setting | Value |
 |---|---|
@@ -80,11 +80,11 @@ Grants: `CONNECT` on the database, `USAGE` on `public`, `SELECT` on all tables a
 
 The script ends with a self-check: every hidden column must be unreadable, and at least one column of each of those tables must still be readable. If either fails, the script stops with an error. See [Hidden columns](hidden-columns.md).
 
-The MCP server does not trust the role settings alone. Every connection it opens also sets `default_transaction_read_only=on`, `statement_timeout=10000`, `idle_in_transaction_session_timeout=30000` and `lock_timeout=1000` as session options, keeps at most 2 connections per target, and names itself `peephole` in `application_name`.
+The MCP server does not trust the role settings alone. Every connection it opens also sets `default_transaction_read_only=on`, `statement_timeout=10000`, `idle_in_transaction_session_timeout=30000` and `lock_timeout=1000` as session options, keeps at most 2 connections per target, and names itself `daypass` in `application_name`.
 
 ## Audit
 
-Every tool call that reaches the guard appends one JSON object to `~/.peephole/audit.jsonl` (mode `0600`), whether it was allowed or not. The fields, from `src/core/audit.ts`:
+Every tool call that reaches the guard appends one JSON object to `~/.daypass/audit.jsonl` (mode `0600`), whether it was allowed or not. The fields, from `src/core/audit.ts`:
 
 | Field | Meaning |
 |---|---|
@@ -108,13 +108,13 @@ Two real lines:
 {"at":"2026-10-29T14:19:03.934Z","who":"alice@laptop.local","leaseId":"b11e4bff","target":"staging","reason":"why did signups drop on Monday","tool":"query","sql":"select id, name, created_at from customers","allowed":true,"rows":1,"ms":6}
 ```
 
-`peephole log -n 30` prints the last lines in one-line form; `ok` ran, `ERR` ran and failed, `BLK` was refused by the guard. The file is plain JSONL, so `jq` and `grep` work on it.
+`daypass log -n 30` prints the last lines in one-line form; `ok` ran, `ERR` ran and failed, `BLK` was refused by the guard. The file is plain JSONL, so `jq` and `grep` work on it.
 
-The SQL text is logged as is. A `WHERE email = 'ada@example.com'` puts that address in the file. `peephole_status`, `peephole open` and `peephole close` do not write audit lines.
+The SQL text is logged as is. A `WHERE email = 'ada@example.com'` puts that address in the file. `daypass_status`, `daypass open` and `daypass close` do not write audit lines.
 
 ## Result caps
 
-A `query` is wrapped as `SELECT * FROM (<sql>) peephole_q LIMIT <maxRows + 1>` so Peephole can tell "exactly 500" from "more than 500". The rows then go through `shapeRows`:
+A `query` is wrapped as `SELECT * FROM (<sql>) daypass_q LIMIT <maxRows + 1>` so Daypass can tell "exactly 500" from "more than 500". The rows then go through `shapeRows`:
 
 | Cap | Default | Config key | Effect when hit |
 |---|---|---|---|
@@ -128,10 +128,10 @@ Also in the shaping: `bigint` becomes a string, `Date` becomes ISO 8601, binary 
 
 ## Files on disk
 
-Everything lives under `~/.peephole`, created with mode `0700`. `PEEPHOLE_HOME` overrides the directory.
+Everything lives under `~/.daypass`, created with mode `0700`. `DAYPASS_HOME` overrides the directory.
 
 | File | Written by | Read by |
 |---|---|---|
-| `config.json` | `peephole init`, then you | every command and the MCP server |
+| `config.json` | `daypass init`, then you | every command and the MCP server |
 | `lease.json` | `open`, `close`, `sweep`, the MCP server on expiry | `status`, `doctor`, the MCP server |
-| `audit.jsonl` | the MCP server | `peephole log` |
+| `audit.jsonl` | the MCP server | `daypass log` |

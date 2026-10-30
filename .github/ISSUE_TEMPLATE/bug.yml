@@ -9,8 +9,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: peephole-db version
-      placeholder: peephole --version
+      label: daypass version
+      placeholder: daypass --version
     validations:
       required: true
   - type: input
@@ -28,5 +28,5 @@ body:
     id: repro
     attributes:
       label: Steps to reproduce
-      description: Commands, the SQL you sent, and the `peephole doctor` output. Redact hostnames if you like.
+      description: Commands, the SQL you sent, and the `daypass doctor` output. Redact hostnames if you like.
       render: shell

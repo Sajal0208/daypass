@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreToolUse hook for the Peephole `query` tool: a second fence on the client, in front of the
+ * PreToolUse hook for the Daypass `query` tool: a second fence on the client, in front of the
  * column grants that Postgres enforces. It reads the tool call from stdin, pulls every identifier
  * out of the SQL, and blocks (exit 2, reason on stderr) when one looks like personal or secret
  * data and the hidden-columns list says nothing about it, hidden or allowed. A column the list
@@ -57,7 +57,7 @@ const NOT_ALIAS = new Set([
 ]);
 
 export function hiddenFilePath(env) {
-  return env.PEEPHOLE_HIDDEN_FILE ?? join(homedir(), '.peephole', 'hidden-columns.txt');
+  return env.DAYPASS_HIDDEN_FILE ?? join(homedir(), '.daypass', 'hidden-columns.txt');
 }
 
 /** Same format as `parseHiddenFile` in src/core/hidden.ts. */
@@ -101,7 +101,7 @@ function identifiers(text) {
   return out;
 }
 
-const HIDDEN_DOCS = 'https://github.com/Sajal0208/peephole/blob/main/docs/hidden-columns.md';
+const HIDDEN_DOCS = 'https://github.com/Sajal0208/daypass/blob/main/docs/hidden-columns.md';
 
 /**
  * Deny reasons are relayed to the human by the model ("Tell the user: ..."); they are never
@@ -114,7 +114,7 @@ const HIDDEN_DOCS = 'https://github.com/Sajal0208/peephole/blob/main/docs/hidden
  * @returns {{ allow: true } | { allow: false, reason: string }}
  */
 export function decide(sql, hiddenFile, env) {
-  if (env.PEEPHOLE_PII_HOOK === 'off') return { allow: true };
+  if (env.DAYPASS_PII_HOOK === 'off') return { allow: true };
   const path = hiddenFilePath(env);
   const text = stripLiteralsAndComments(sql).replace(/"/g, '');
   const aliases = tableAliases(text);
@@ -124,16 +124,16 @@ export function decide(sql, hiddenFile, env) {
       return {
         allow: false,
         reason:
-          `Peephole PII guard: no hidden-columns list at ${path}. Tell the user: generate one with ` +
-          `peephole hidden suggest --live <target> > ${path} (${HIDDEN_DOCS}), or set PEEPHOLE_PII_HOOK=off for this session.`,
+          `Daypass PII guard: no hidden-columns list at ${path}. Tell the user: generate one with ` +
+          `daypass hidden suggest --live <target> > ${path} (${HIDDEN_DOCS}), or set DAYPASS_PII_HOOK=off for this session.`,
       };
     }
     if (typeof hiddenFile !== 'string') {
       return {
         allow: false,
         reason:
-          `Peephole PII guard: cannot read hidden-columns list at ${path}: ${hiddenFile.error}. ` +
-          `Tell the user: fix or remove that file, or set PEEPHOLE_PII_HOOK=off for this session.`,
+          `Daypass PII guard: cannot read hidden-columns list at ${path}: ${hiddenFile.error}. ` +
+          `Tell the user: fix or remove that file, or set DAYPASS_PII_HOOK=off for this session.`,
       };
     }
     const { hidden, allow } = parseHiddenFile(hiddenFile);
@@ -143,10 +143,10 @@ export function decide(sql, hiddenFile, env) {
     return {
       allow: false,
       reason:
-        `Peephole PII guard: "${name}" looks like personal or secret data and is not in the hidden-columns list (${path}). ` +
-        `Tell the user: if it must stay visible, add "!${table}.${name}" after review, or set PEEPHOLE_PII_HOOK=off for this session; ` +
+        `Daypass PII guard: "${name}" looks like personal or secret data and is not in the hidden-columns list (${path}). ` +
+        `Tell the user: if it must stay visible, add "!${table}.${name}" after review, or set DAYPASS_PII_HOOK=off for this session; ` +
         `otherwise add "${table}.${name}" and have the database owner re-run ` +
-        `peephole sql --hide-file ${path} | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1.`,
+        `daypass sql --hide-file ${path} | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1.`,
     };
   }
   return { allow: true };
@@ -169,7 +169,7 @@ function main() {
   const toolInput = input?.tool_input;
   if (toolInput === null || typeof toolInput !== 'object') return;
   if (typeof toolInput.sql !== 'string') {
-    process.stderr.write('Peephole PII guard: no "sql" in tool input, not checked\n');
+    process.stderr.write('Daypass PII guard: no "sql" in tool input, not checked\n');
     process.exit(1);
   }
   let hiddenFile;

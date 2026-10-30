@@ -4,7 +4,7 @@ dist/
 .env
 
 # local
-.peephole/
+.daypass/
 *.tgz
 
 # plugin evals (written by `claude plugin eval`)

@@ -1,11 +1,11 @@
--- Peephole: one-time setup of the read-only role on the target database.
+-- Daypass: one-time setup of the read-only role on the target database.
 -- Run as the DB owner / master user, once per database:
 --
---   peephole sql --hide-file hidden-columns.txt | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1
+--   daypass sql --hide-file hidden-columns.txt | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1
 --
 -- (-X skips your psqlrc.)
 --
--- `peephole sql --role NAME` changes the role name; `--hide table.col ...` / `--hide-file`
+-- `daypass sql --role NAME` changes the role name; `--hide table.col ...` / `--hide-file`
 -- list columns the agent must never see. Needs psql (uses \gexec).
 --
 -- Safe to re-run. Nothing here touches data. The whole script is ONE transaction (BEGIN below,
@@ -45,7 +45,7 @@ BEGIN
 END $$;
 
 -- 2. Belt and braces at the role level (the client also sets these per session).
---    10s while Peephole reads the live instance; raise once it points at a read replica.
+--    10s while Daypass reads the live instance; raise once it points at a read replica.
 ALTER ROLE "__ROLE__" SET default_transaction_read_only = on;
 ALTER ROLE "__ROLE__" SET statement_timeout = '10s';
 ALTER ROLE "__ROLE__" SET idle_in_transaction_session_timeout = '30s';
@@ -67,7 +67,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "__ROLE__";
 --    Side effects: `SELECT *` on these tables fails (Claude must name columns), and a column
 --    added later to one of these tables stays hidden until this script is re-run.
 --    An entry that does not exist stops the script. If you use Prisma, `npm test` with
---    PEEPHOLE_HIDDEN_FILE and PEEPHOLE_PRISMA_SCHEMA set checks the list against your schema.
+--    DAYPASS_HIDDEN_FILE and DAYPASS_PRISMA_SCHEMA set checks the list against your schema.
 DO $$
 DECLARE
   hidden text[] := __HIDDEN__;

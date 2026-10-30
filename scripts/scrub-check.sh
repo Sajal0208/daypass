@@ -8,7 +8,7 @@
 #   SCRUB_HISTORY_RANGE=<range>   also scan just that rev-range, e.g. origin/main..HEAD (CI on PRs)
 #
 # Tree: `git grep --untracked` sees tracked and untracked-but-not-ignored files, exactly what can
-# be committed; gitignored local secrets (.env, .peephole/) are never read or echoed. Binary
+# be committed; gitignored local secrets (.env, .daypass/) are never read or echoed. Binary
 # files are scanned too, so an image with an id in it fails.
 # History: only added lines (^+) and commit messages count, because a removed line was already
 # in the base. PRs are squash-merged, so only the net diff reaches main, but a PR's own commits

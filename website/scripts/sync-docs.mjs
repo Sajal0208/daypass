@@ -30,7 +30,7 @@ import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const REPO_URL = 'https://github.com/Sajal0208/peephole';
+const REPO_URL = 'https://github.com/Sajal0208/daypass';
 const BRANCH = 'main';
 
 const websiteDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -177,7 +177,7 @@ function plainText(md) {
 		.replace(/`([^`]*)`/g, '$1')
 		.replace(/\*\*(.+?)\*\*/g, '$1')
 		.replace(/\*(.+?)\*/g, '$1')
-		// Underscore emphasis only as whole words, so `peephole_ro` and `snake_case` survive.
+		// Underscore emphasis only as whole words, so `daypass_ro` and `snake_case` survive.
 		.replace(/(?<![\w`])__(.+?)__(?![\w`])/g, '$1')
 		.replace(/(?<![\w`])_(.+?)_(?![\w`])/g, '$1')
 		.replace(/<[^>]+>/g, '')

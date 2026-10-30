@@ -19,7 +19,7 @@ import {
   resolveTarget,
   serveStdio,
   CONFIG_PATH,
-  PEEPHOLE_HOME,
+  DAYPASS_HOME,
   allowIp,
   revokeRule,
   sweepExpired,
@@ -34,7 +34,7 @@ const { version } = require('../../package.json') as { version: string };
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const program = new Command()
-  .name('peephole')
+  .name('daypass')
   .description('Temporary, read-only, audited database access for AI coding agents')
   .version(version);
 
@@ -63,7 +63,7 @@ program
   .command('init')
   .description(`Write a starter config to ${CONFIG_PATH}`)
   .action(async () => {
-    await fs.mkdir(PEEPHOLE_HOME, { recursive: true, mode: 0o700 });
+    await fs.mkdir(DAYPASS_HOME, { recursive: true, mode: 0o700 });
     try {
       await fs.access(CONFIG_PATH);
       console.log(`Config already exists: ${CONFIG_PATH}`);
@@ -77,7 +77,7 @@ program
           host: 'my-db.abc123.eu-central-1.rds.amazonaws.com',
           port: 5432,
           database: 'mydb',
-          user: 'peephole_ro',
+          user: 'daypass_ro',
           region: 'eu-central-1',
           awsProfile: 'default',
           securityGroupId: 'sg-xxxxxxxxxxxxxxxxx',
@@ -87,13 +87,13 @@ program
       },
     };
     await fs.writeFile(CONFIG_PATH, JSON.stringify(example, null, 2), { mode: 0o600 });
-    console.log(`Wrote ${CONFIG_PATH}\nNext: edit it, run the role setup (peephole sql | psql ...), then: peephole open prod --reason "..."`);
+    console.log(`Wrote ${CONFIG_PATH}\nNext: edit it, run the role setup (daypass sql | psql ...), then: daypass open prod --reason "..."`);
   });
 
 program
   .command('sql')
   .description('Print the one-time role setup SQL (pipe into psql as the DB owner)')
-  .option('--role <name>', 'name of the read-only role', 'peephole_ro')
+  .option('--role <name>', 'name of the read-only role', 'daypass_ro')
   .option('--hide <cols...>', 'columns to hide, as table.column', [])
   .option('--hide-file <path>', 'file with one table.column per line (# comments ok; ! lines are ignored)')
   .action(async (opts: { role: string; hide: string[]; hideFile?: string }) => {
@@ -121,7 +121,7 @@ program
 
     const existing = await readLease();
     if (existing && isLeaseLive(existing)) {
-      console.log(`A lease is already open (${existing.id} on ${existing.target}, until ${existing.expiresAt}). Run: peephole close`);
+      console.log(`A lease is already open (${existing.id} on ${existing.target}, until ${existing.expiresAt}). Run: daypass close`);
       return;
     }
     if (existing) await releaseNetwork(existing, cfg.targets[existing.target]).catch((e) => console.warn(`cleanup: ${e.message}`));
@@ -152,7 +152,7 @@ program
 
     await writeLease(lease);
     console.log(`Lease ${lease.id} open on "${targetName}" until ${lease.expiresAt} (${opts.ttl}). Reason: ${lease.reason}`);
-    console.log('Your AI session can now use the peephole MCP tools. Close early with: peephole close');
+    console.log('Your AI session can now use the daypass MCP tools. Close early with: daypass close');
   });
 
 program
@@ -165,7 +165,7 @@ program
     console.log(
       isLeaseLive(l)
         ? `Lease ${l.id} on "${l.target}" by ${l.who}: ${left} min left. Reason: ${l.reason}`
-        : `Lease ${l.id} on "${l.target}" expired at ${l.expiresAt}. Run: peephole close`,
+        : `Lease ${l.id} on "${l.target}" expired at ${l.expiresAt}. Run: daypass close`,
     );
   });
 
@@ -183,7 +183,7 @@ program
 
 program
   .command('sweep <target>')
-  .description('Remove expired peephole:* rules from the target security group (run from cron)')
+  .description('Remove expired daypass:* rules from the target security group (run from cron)')
   .action(async (targetName: string) => {
     const cfg = await readConfig();
     const t = cfg.targets[targetName];
@@ -225,7 +225,7 @@ program.addCommand(hiddenCommand());
 
 program
   .command('mcp')
-  .description('Run the MCP server on stdio (used by: claude mcp add peephole -- peephole mcp)')
+  .description('Run the MCP server on stdio (used by: claude mcp add daypass -- daypass mcp)')
   .action(async () => {
     await serveStdio();
   });

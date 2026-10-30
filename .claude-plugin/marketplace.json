@@ -1,12 +1,12 @@
 {
-  "name": "peephole",
+  "name": "daypass",
   "owner": { "name": "Vocobase" },
   "metadata": {
     "description": "Temporary, read-only, audited database access for AI coding agents."
   },
   "plugins": [
     {
-      "name": "peephole",
+      "name": "daypass",
       "source": "./plugin",
       "description": "Temporary, read-only, audited production-database access for Claude Code: lease-aware skills, setup walkthrough, PII guard hook.",
       "category": "database"

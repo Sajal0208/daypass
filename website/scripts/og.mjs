@@ -62,7 +62,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${
   <rect width="${width}" height="${height}" fill="${BG}"/>
   <rect width="${width}" height="${height}" fill="url(#glow)"/>
 
-  <!-- Peephole mark (same geometry as favicon.svg, scaled 32 -> 88). -->
+  <!-- Daypass mark (same geometry as favicon.svg, scaled 32 -> 88). -->
   <g transform="translate(80 84) scale(2.75)">
     <rect width="32" height="32" rx="7" fill="${ACCENT_DEEP}"/>
     <circle cx="16" cy="16" r="9" fill="none" stroke="${TEXT}" stroke-width="2.5"/>

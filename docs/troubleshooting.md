@@ -1,19 +1,19 @@
 # Troubleshooting
 
-`peephole doctor <target>` walks the whole chain for one target, from the Node version to a write attempt against the database, and prints one line per link with ✔ or ✖. It never throws; it exits 1 if any line is ✖. This page lists every check in the order it runs, what a ✖ means, and the fix. The second half covers the messages the MCP tools return to the agent. Output below was captured against a local Postgres 16 in Docker.
+`daypass doctor <target>` walks the whole chain for one target, from the Node version to a write attempt against the database, and prints one line per link with ✔ or ✖. It never throws; it exits 1 if any line is ✖. This page lists every check in the order it runs, what a ✖ means, and the fix. The second half covers the messages the MCP tools return to the agent. Output below was captured against a local Postgres 16 in Docker.
 
-## `peephole doctor`
+## `daypass doctor`
 
 Without a target name, `doctor` checks the target of the current lease, or the first target in the config. A healthy run:
 
 ```
 ✔ node >= 20       v25.0.0
-✔ config           ~/.peephole/config.json (staging)
-✔ target           staging: peephole_ro@localhost:5445/postgres via password
+✔ config           ~/.daypass/config.json (staging)
+✔ target           staging: daypass_ro@localhost:5445/postgres via password
 ✔ dns              localhost → ::1
 ✔ tcp              localhost:5445 open
 ✔ lease            85d19374 until 2026-10-29T14:46:59.226Z
-✔ db login         as peephole_ro; read_only=on; PostgreSQL 16.14 (Debian 16.14-1.pgdg13+1) on aarch64-unknown-linux-gnu
+✔ db login         as daypass_ro; read_only=on; PostgreSQL 16.14 (Debian 16.14-1.pgdg13+1) on aarch64-unknown-linux-gnu
 ✔ write blocked    write attempt rejected, as it should be
 ```
 
@@ -21,17 +21,17 @@ Some checks only run when earlier ones pass: `aws credentials` appears only for 
 
 ### `node >= 20`
 
-Detail: the running Node version. ✖ means Node is older than 20. Install Node 20 or newer and reinstall: `npm install -g peephole-db`.
+Detail: the running Node version. ✖ means Node is older than 20. Install Node 20 or newer and reinstall: `npm install -g daypass`.
 
 ### `config`
 
 Detail: the config path and the target names in it.
 
 ```
-✖ config           No config at ~/.peephole/config.json. Run: peephole init
+✖ config           No config at ~/.daypass/config.json. Run: daypass init
 ```
 
-Run `peephole init`, then edit the file. A JSON syntax error shows up here too, with the parser's message; fix the file. `PEEPHOLE_HOME` changes where the file is looked for, so an unexpected path means the variable is set in this shell but not the one where you wrote the config.
+Run `daypass init`, then edit the file. A JSON syntax error shows up here too, with the parser's message; fix the file. `DAYPASS_HOME` changes where the file is looked for, so an unexpected path means the variable is set in this shell but not the one where you wrote the config.
 
 ### `target`
 
@@ -65,35 +65,35 @@ Detail: `host:port open`, or the failure.
 ✖ tcp              localhost:5999
 ```
 
-An empty failure like this is a refused connection: nothing listens on that port. `timeout after 5 s (firewall / security group?)` means packets are dropped: on RDS, the security group has no rule for your IP. Check that the lease was opened with the network rule (`peephole status` shows nothing about it; `peephole open` printed `Allowed <ip> on sg-… (rule sgr-…)` when it worked), that there is no `--no-network`, and that your public IP has not changed since `open`. Close and reopen the lease to get a fresh rule.
+An empty failure like this is a refused connection: nothing listens on that port. `timeout after 5 s (firewall / security group?)` means packets are dropped: on RDS, the security group has no rule for your IP. Check that the lease was opened with the network rule (`daypass status` shows nothing about it; `daypass open` printed `Allowed <ip> on sg-… (rule sgr-…)` when it worked), that there is no `--no-network`, and that your public IP has not changed since `open`. Close and reopen the lease to get a fresh rule.
 
 ### `lease`
 
 Detail: the lease id and expiry.
 
 ```
-✖ lease            none open for "staging" (peephole open staging --reason ...)
+✖ lease            none open for "staging" (daypass open staging --reason ...)
 ```
 
-No live lease for this target. Run the printed command. A lease that is open on a different target also shows as ✖ for this one; only one lease exists at a time (`peephole status` shows which). An expired lease is the same ✖; `peephole close` clears it.
+No live lease for this target. Run the printed command. A lease that is open on a different target also shows as ✖ for this one; only one lease exists at a time (`daypass status` shows which). An expired lease is the same ✖; `daypass close` clears it.
 
 ### `db login`
 
 Runs only with a live lease and an open port. Detail: the role, `read_only=on` and the server version.
 
 ```
-✖ db login         password authentication failed for user "peephole_ro"
+✖ db login         password authentication failed for user "daypass_ro"
 ```
 
-The password in the URL does not match the role's (the setup SQL never changes a password once set; a role created by the first run has none until you set one). Run `ALTER ROLE peephole_ro PASSWORD '…'` as the owner and update the config.
+The password in the URL does not match the role's (the setup SQL never changes a password once set; a role created by the first run has none until you set one). Run `ALTER ROLE daypass_ro PASSWORD '…'` as the owner and update the config.
 
 ```
 ✖ db login         The server does not support SSL connections
 ```
 
-Peephole requires TLS and the server has none. For a database on your own machine, append `?sslmode=disable` to the URL. For anything remote, get TLS on the server; Peephole does not fall back to plaintext.
+Daypass requires TLS and the server has none. For a database on your own machine, append `?sslmode=disable` to the URL. For anything remote, get TLS on the server; Daypass does not fall back to plaintext.
 
-Other messages: a certificate error (`self-signed certificate in certificate chain`, `unable to verify the first certificate`) means the system CA store does not know the server's CA; set `sslCa` to the provider's CA bundle, see [Other Postgres](other-postgres.md). `PAM authentication failed` or `password authentication failed` on an RDS target means IAM auth is not enabled on the instance, `rds_iam` is not granted to the role, or the caller lacks `rds-db:connect` on that resource; see [AWS RDS](aws-rds.md). `too many connections for role "peephole_ro"` means the 5-connection limit is used up by other sessions; close them or wait. `timeout exceeded when trying to connect` means the port is open but the server did not finish the handshake in 10 s.
+Other messages: a certificate error (`self-signed certificate in certificate chain`, `unable to verify the first certificate`) means the system CA store does not know the server's CA; set `sslCa` to the provider's CA bundle, see [Other Postgres](other-postgres.md). `PAM authentication failed` or `password authentication failed` on an RDS target means IAM auth is not enabled on the instance, `rds_iam` is not granted to the role, or the caller lacks `rds-db:connect` on that resource; see [AWS RDS](aws-rds.md). `too many connections for role "daypass_ro"` means the 5-connection limit is used up by other sessions; close them or wait. `timeout exceeded when trying to connect` means the port is open but the server did not finish the handshake in 10 s.
 
 ### `read-only`
 
@@ -103,11 +103,11 @@ Printed only when the login succeeded and the session is not read-only:
 ✖ read-only        session is NOT read-only — check role settings
 ```
 
-The role lacks `default_transaction_read_only = on`, and the session setting Peephole sends was not applied either (some poolers drop startup options). Re-run the setup SQL; if it persists, connect to the direct host instead of a pooler.
+The role lacks `default_transaction_read_only = on`, and the session setting Daypass sends was not applied either (some poolers drop startup options). Re-run the setup SQL; if it persists, connect to the direct host instead of a pooler.
 
 ### `write blocked`
 
-`doctor` tries `CREATE TEMP TABLE peephole_doctor_probe(x int)` and expects the database to refuse it.
+`doctor` tries `CREATE TEMP TABLE daypass_doctor_probe(x int)` and expects the database to refuse it.
 
 ```
 ✖ write blocked    CREATE TEMP TABLE succeeded — role is not read-only!
@@ -119,21 +119,21 @@ The role can write. Stop using the target, close the lease, and re-run the setup
 
 Every MCP tool returns plain text. These are the ones that mean something needs doing on your side.
 
-### `No active Peephole lease. Ask the user to run: peephole open <target> --reason "..."`
+### `No active Daypass lease. Ask the user to run: daypass open <target> --reason "..."`
 
 No `lease.json`. Open one. The agent cannot do this itself.
 
-### `Lease 748b3034 for "staging" expired at 2026-10-29T14:17:38.387Z. Ask the user to run: peephole open staging --reason "..."`
+### `Lease 748b3034 for "staging" expired at 2026-10-29T14:17:38.387Z. Ask the user to run: daypass open staging --reason "..."`
 
 The lease ran out. If the target had a security-group rule, this same call removed it. Open a new lease.
 
 ### `Lease target "staging" is not in config.`
 
-The lease names a target that was removed or renamed in the config after `open`. `peephole close`, fix the config, `open` again.
+The lease names a target that was removed or renamed in the config after `open`. `daypass close`, fix the config, `open` again.
 
-### `A lease is already open (85d19374 on staging, until …). Run: peephole close`
+### `A lease is already open (85d19374 on staging, until …). Run: daypass close`
 
-Printed by `peephole open`, not by a tool. One lease per machine. Close the current one first, or wait for it to expire. Note that `open` on a second target while the first lease is live is refused, not switched.
+Printed by `daypass open`, not by a tool. One lease per machine. Close the current one first, or wait for it to expire. Note that `open` on a second target while the first lease is live is refused, not switched.
 
 ### `Query failed after 17 ms: permission denied for table customers`
 
@@ -161,7 +161,7 @@ Not an error: the result was capped and the header says `TRUNCATED`. `Stopped at
 
 ### `Query failed after 3 ms: WITH clause containing a data-modifying statement must be at the top level`
 
-The agent put an `INSERT`/`UPDATE`/`DELETE` inside a CTE. The guard let the outer `SELECT` through, Peephole wrapped it in a subquery for the row cap, and Postgres rejected the shape. Even unwrapped, the role's read-only transaction would refuse the write. Nothing to fix.
+The agent put an `INSERT`/`UPDATE`/`DELETE` inside a CTE. The guard let the outer `SELECT` through, Daypass wrapped it in a subquery for the row cap, and Postgres rejected the shape. Even unwrapped, the role's read-only transaction would refuse the write. Nothing to fix.
 
 ### `Query failed after 0 ms: relation "nope" does not exist`
 
@@ -169,4 +169,4 @@ A plain Postgres error passed through. Any message that starts with `Query faile
 
 ## Still stuck
 
-`peephole log -n 50` shows what the agent sent and what came back, in order. Run `peephole doctor <target>` again after each change. If the role can do something it should not, do not open an issue; follow the [security policy](../SECURITY.md).
+`daypass log -n 50` shows what the agent sent and what came back, in order. Run `daypass doctor <target>` again after each change. If the role can do something it should not, do not open an issue; follow the [security policy](../SECURITY.md).

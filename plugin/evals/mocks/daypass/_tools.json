@@ -1,8 +1,8 @@
 {
   "tools": [
     {
-      "name": "peephole_status",
-      "description": "Show whether a Peephole lease is open, for which database, and how long is left.",
+      "name": "daypass_status",
+      "description": "Show whether a Daypass lease is open, for which database, and how long is left.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",

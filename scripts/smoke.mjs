@@ -6,10 +6,10 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-const home = process.env.PEEPHOLE_HOME;
-assert.ok(home, 'PEEPHOLE_HOME must be set');
+const home = process.env.DAYPASS_HOME;
+assert.ok(home, 'DAYPASS_HOME must be set');
 
-const client = new Client({ name: 'peephole-smoke', version: '0' });
+const client = new Client({ name: 'daypass-smoke', version: '0' });
 await client.connect(new StdioClientTransport({ command: 'node', args: ['dist/cli/main.js', 'mcp'], env: process.env }));
 
 const call = async (name, args = {}) => {
@@ -29,7 +29,7 @@ if (process.env.DEMO === '1') {
 }
 
 const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-assert.deepEqual(tools, ['describe_table', 'explain', 'list_tables', 'peephole_status', 'query']);
+assert.deepEqual(tools, ['daypass_status', 'describe_table', 'explain', 'list_tables', 'query']);
 
 let r = await call('query', { sql: 'select id, name from customers' });
 assert.ok(r.ok && r.text.includes('"Ada"'), 'visible columns readable');

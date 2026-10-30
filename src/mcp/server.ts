@@ -13,8 +13,8 @@ const DEFAULTS = { maxRows: 500, maxCell: 2000, maxBytes: 1_000_000 };
 type Ctx = { lease: Lease; target: ResolvedTarget; targetName: string };
 
 /**
- * An expired lease may still hold a security-group rule (nobody ran `peephole close`).
- * Revoke it on sight; `peephole sweep` from cron is the backstop if this fails.
+ * An expired lease may still hold a security-group rule (nobody ran `daypass close`).
+ * Revoke it on sight; `daypass sweep` from cron is the backstop if this fails.
  */
 async function releaseExpiredNetwork(lease: Lease): Promise<void> {
   try {
@@ -34,8 +34,8 @@ async function ctx(): Promise<Ctx | string> {
   if (shouldReleaseNetwork(lease)) await releaseExpiredNetwork(lease!);
   if (!lease || !isLeaseLive(lease)) {
     return lease
-      ? `Lease ${lease.id} for "${lease.target}" expired at ${lease.expiresAt}. Ask the user to run: peephole open ${lease.target} --reason "..."`
-      : 'No active Peephole lease. Ask the user to run: peephole open <target> --reason "..."';
+      ? `Lease ${lease.id} for "${lease.target}" expired at ${lease.expiresAt}. Ask the user to run: daypass open ${lease.target} --reason "..."`
+      : 'No active Daypass lease. Ask the user to run: daypass open <target> --reason "..."';
   }
   const cfg = await readConfig();
   const raw = cfg.targets[lease.target];
@@ -110,11 +110,11 @@ async function runGuarded(tool: string, sql: string, c: Ctx, wrap: boolean) {
 }
 
 export function buildServer(): McpServer {
-  const server = new McpServer({ name: 'peephole', version: '0.1.0' });
+  const server = new McpServer({ name: 'daypass', version: '0.1.0' });
 
   server.tool(
-    'peephole_status',
-    'Show whether a Peephole lease is open, for which database, and how long is left.',
+    'daypass_status',
+    'Show whether a Daypass lease is open, for which database, and how long is left.',
     {},
     async () => {
       const lease = await readLease();

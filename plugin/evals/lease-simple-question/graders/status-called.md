@@ -1,5 +1,5 @@
 ---
 type: tool_used
-tool: mcp__plugin_peephole_peephole__peephole_status
+tool: mcp__plugin_daypass_daypass__daypass_status
 min: 1
 ---

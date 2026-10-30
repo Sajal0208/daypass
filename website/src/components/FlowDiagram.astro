@@ -3,13 +3,13 @@
  * The request path, drawn twice: a wide left-to-right version and a narrow top-to-bottom one.
  * CSS shows one of them depending on the viewport. Both say the same thing, in the same words.
  *
- * What is drawn matches the code: the MCP server reads the lease file written by `peephole open`
+ * What is drawn matches the code: the MCP server reads the lease file written by `daypass open`
  * (src/mcp/state.ts), parses every statement with libpg-query (src/core/guard.ts), connects as
  * the restricted role with an RDS IAM token and a verified, pinned TLS CA (src/mcp/db.ts), and
- * appends one JSON line per call to ~/.peephole/audit.jsonl (src/core/audit.ts).
+ * appends one JSON line per call to ~/.daypass/audit.jsonl (src/core/audit.ts).
  */
 const claim =
-	'A human opens a lease in a terminal. Claude Code sends SQL to the Peephole MCP server, which checks that the lease is live and that the statement is a single SELECT, then runs it as a restricted Postgres role over pinned TLS with an IAM token. The role sees visible columns only, read-only, with a 10 second timeout. Every call appends one JSON line to audit.jsonl.';
+	'A human opens a lease in a terminal. Claude Code sends SQL to the Daypass MCP server, which checks that the lease is live and that the statement is a single SELECT, then runs it as a restricted Postgres role over pinned TLS with an IAM token. The role sees visible columns only, read-only, with a 10 second timeout. Every call appends one JSON line to audit.jsonl.';
 ---
 
 <figure class="flow">
@@ -22,7 +22,7 @@ const claim =
 		font-family="var(--font-sans)"
 		font-size="12"
 	>
-		<title id="flow-wide-title">How a query travels through Peephole</title>
+		<title id="flow-wide-title">How a query travels through Daypass</title>
 		<desc id="flow-wide-desc">{claim}</desc>
 		<defs>
 			<marker id="fw-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
@@ -30,9 +30,9 @@ const claim =
 			</marker>
 		</defs>
 
-		{/* peephole open */}
+		{/* daypass open */}
 		<rect x="330" y="14" width="220" height="58" rx="6" class="node" />
-		<text x="440" y="38" text-anchor="middle" class="title mono">peephole open</text>
+		<text x="440" y="38" text-anchor="middle" class="title mono">daypass open</text>
 		<text x="440" y="58" text-anchor="middle" class="sub">you, in a terminal</text>
 
 		{/* Claude Code */}
@@ -40,19 +40,19 @@ const claim =
 		<text x="90" y="168" text-anchor="middle" class="title">Claude Code</text>
 		<text x="90" y="190" text-anchor="middle" class="sub">or any MCP client</text>
 
-		{/* Peephole MCP server (the gate; the one accent-coloured element) */}
+		{/* Daypass MCP server (the gate; the one accent-coloured element) */}
 		<rect x="310" y="136" width="260" height="76" rx="6" class="node gate" />
-		<text x="440" y="162" text-anchor="middle" class="title">Peephole MCP server</text>
+		<text x="440" y="162" text-anchor="middle" class="title">Daypass MCP server</text>
 		<text x="440" y="185" text-anchor="middle" class="sub mono">SELECT-only parser (libpg-query)</text>
 
 		{/* Postgres role */}
 		<rect x="710" y="140" width="160" height="68" rx="6" class="node" />
 		<text x="790" y="168" text-anchor="middle" class="title">Postgres role</text>
-		<text x="790" y="190" text-anchor="middle" class="sub mono">peephole_ro</text>
+		<text x="790" y="190" text-anchor="middle" class="sub mono">daypass_ro</text>
 
 		{/* audit.jsonl */}
 		<rect x="330" y="272" width="220" height="48" rx="6" class="node" />
-		<text x="440" y="301" text-anchor="middle" class="title mono">~/.peephole/audit.jsonl</text>
+		<text x="440" y="301" text-anchor="middle" class="title mono">~/.daypass/audit.jsonl</text>
 
 		{/* lease file -> server */}
 		<line x1="440" y1="72" x2="440" y2="134" class="edge" marker-end="url(#fw-arrow)" />
@@ -83,7 +83,7 @@ const claim =
 		font-family="var(--font-sans)"
 		font-size="11"
 	>
-		<title id="flow-narrow-title">How a query travels through Peephole</title>
+		<title id="flow-narrow-title">How a query travels through Daypass</title>
 		<desc id="flow-narrow-desc">{claim}</desc>
 		<defs>
 			<marker id="fn-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
@@ -92,7 +92,7 @@ const claim =
 		</defs>
 
 		<rect x="10" y="10" width="165" height="58" rx="6" class="node" />
-		<text x="92" y="34" text-anchor="middle" class="title mono">peephole open</text>
+		<text x="92" y="34" text-anchor="middle" class="title mono">daypass open</text>
 		<text x="92" y="54" text-anchor="middle" class="sub">you, in a terminal</text>
 
 		<rect x="185" y="10" width="165" height="58" rx="6" class="node" />
@@ -105,7 +105,7 @@ const claim =
 		<text x="275" y="104" class="label">query(sql)</text>
 
 		<rect x="60" y="132" width="290" height="72" rx="6" class="node gate" />
-		<text x="205" y="158" text-anchor="middle" class="title">Peephole MCP server</text>
+		<text x="205" y="158" text-anchor="middle" class="title">Daypass MCP server</text>
 		<text x="205" y="182" text-anchor="middle" class="sub mono">SELECT-only parser (libpg-query)</text>
 
 		<line x1="80" y1="204" x2="80" y2="268" class="edge" marker-end="url(#fn-arrow)" />
@@ -116,13 +116,13 @@ const claim =
 
 		<rect x="60" y="272" width="290" height="58" rx="6" class="node" />
 		<text x="205" y="296" text-anchor="middle" class="title">Postgres role</text>
-		<text x="205" y="316" text-anchor="middle" class="sub mono">peephole_ro</text>
+		<text x="205" y="316" text-anchor="middle" class="sub mono">daypass_ro</text>
 
 		{/* server -> audit, routed down the left gutter past the role */}
 		<path d="M60 168 H30 V388 H56" fill="none" class="edge" marker-end="url(#fn-arrow)" />
 		<text x="60" y="354" class="label">one JSON line per call</text>
 		<rect x="60" y="364" width="290" height="48" rx="6" class="node" />
-		<text x="205" y="393" text-anchor="middle" class="title mono">~/.peephole/audit.jsonl</text>
+		<text x="205" y="393" text-anchor="middle" class="title mono">~/.daypass/audit.jsonl</text>
 	</svg>
 
 	<figcaption>

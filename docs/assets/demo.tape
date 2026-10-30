@@ -1,5 +1,5 @@
 # README demo. Record with scripts/record-demo.sh (it builds the scene this tape expects:
-# a Docker Postgres, a "prod" target in an isolated PEEPHOLE_HOME, and `peephole` on PATH).
+# a Docker Postgres, a "prod" target in an isolated DAYPASS_HOME, and `daypass` on PATH).
 Output docs/assets/demo.gif
 
 Set Shell bash
@@ -15,17 +15,17 @@ Type "export PS1='$ '; clear"
 Enter
 Show
 
-Type `peephole open prod --ttl 30m --reason "why did signups drop on Monday"`
+Type `daypass open prod --ttl 30m --reason "why did signups drop on Monday"`
 Sleep 400ms
 Enter
 Sleep 2s
 
-Type "peephole status"
+Type "daypass status"
 Sleep 300ms
 Enter
 Sleep 1.5s
 
-Type "peephole doctor prod"
+Type "daypass doctor prod"
 Sleep 300ms
 Enter
 Sleep 2.5s
@@ -35,12 +35,12 @@ Sleep 300ms
 Enter
 Sleep 3s
 
-Type "peephole log -n 3"
+Type "daypass log -n 3"
 Sleep 300ms
 Enter
 Sleep 2.5s
 
-Type "peephole close"
+Type "daypass close"
 Sleep 300ms
 Enter
 Sleep 2.5s

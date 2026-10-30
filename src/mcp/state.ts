@@ -4,11 +4,11 @@ import { join } from 'node:path';
 import type { Lease, AuditEvent } from '../core/index.js';
 import { formatAudit } from '../core/index.js';
 
-/** Everything Peephole keeps on disk lives under ~/.peephole (override with PEEPHOLE_HOME). */
-export const PEEPHOLE_HOME = process.env.PEEPHOLE_HOME ?? join(homedir(), '.peephole');
-export const CONFIG_PATH = join(PEEPHOLE_HOME, 'config.json');
-export const LEASE_PATH = join(PEEPHOLE_HOME, 'lease.json');
-export const AUDIT_PATH = join(PEEPHOLE_HOME, 'audit.jsonl');
+/** Everything Daypass keeps on disk lives under ~/.daypass (override with DAYPASS_HOME). */
+export const DAYPASS_HOME = process.env.DAYPASS_HOME ?? join(homedir(), '.daypass');
+export const CONFIG_PATH = join(DAYPASS_HOME, 'config.json');
+export const LEASE_PATH = join(DAYPASS_HOME, 'lease.json');
+export const AUDIT_PATH = join(DAYPASS_HOME, 'audit.jsonl');
 
 export interface TargetConfig {
   /** Shortcut for any Postgres: postgres://user:pass@host:5432/db. Fields below override it. */
@@ -76,7 +76,7 @@ export async function readConfig(): Promise<Config> {
   try {
     return JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
   } catch (e: any) {
-    if (e.code === 'ENOENT') throw new Error(`No config at ${CONFIG_PATH}. Run: peephole init`);
+    if (e.code === 'ENOENT') throw new Error(`No config at ${CONFIG_PATH}. Run: daypass init`);
     throw e;
   }
 }
@@ -91,7 +91,7 @@ export async function readLease(): Promise<Lease | null> {
 }
 
 export async function writeLease(l: Lease): Promise<void> {
-  await fs.mkdir(PEEPHOLE_HOME, { recursive: true, mode: 0o700 });
+  await fs.mkdir(DAYPASS_HOME, { recursive: true, mode: 0o700 });
   await fs.writeFile(LEASE_PATH, JSON.stringify(l, null, 2), { mode: 0o600 });
 }
 
@@ -100,7 +100,7 @@ export async function clearLease(): Promise<void> {
 }
 
 export async function appendAudit(e: AuditEvent): Promise<void> {
-  await fs.mkdir(PEEPHOLE_HOME, { recursive: true, mode: 0o700 });
+  await fs.mkdir(DAYPASS_HOME, { recursive: true, mode: 0o700 });
   await fs.appendFile(AUDIT_PATH, formatAudit(e), { mode: 0o600 });
 }
 

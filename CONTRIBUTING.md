@@ -1,14 +1,14 @@
 # Contributing
 
-Thanks for helping. Peephole is small on purpose; please keep it that way.
+Thanks for helping. Daypass is small on purpose; please keep it that way.
 
 ## Setup
 
 ```bash
-git clone https://github.com/Sajal0208/peephole && cd peephole
+git clone https://github.com/Sajal0208/daypass && cd daypass
 npm install
 npm run build && npm test          # unit tests, no database needed
-npm link                           # `peephole` on your PATH, pointing at dist/
+npm link                           # `daypass` on your PATH, pointing at dist/
 ```
 
 End-to-end against a real Postgres (Docker is easiest):

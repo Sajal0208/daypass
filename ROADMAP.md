@@ -1,8 +1,8 @@
 # Roadmap
 
-Where Peephole is going, in rough order. No dates: items move when they are ready and when
+Where Daypass is going, in rough order. No dates: items move when they are ready and when
 people ask for them. Each item carries a status and, once scheduled, a
-[milestone](https://github.com/Sajal0208/peephole/milestones).
+[milestone](https://github.com/Sajal0208/daypass/milestones).
 
 Status words: **idea** (we would take a PR), **planned** (on a milestone, not started),
 **in progress** (a branch exists).
@@ -11,20 +11,20 @@ Status words: **idea** (we would take a PR), **planned** (on a milestone, not st
 
 What ships today, so the rest of this page has a baseline.
 
-- CLI: `peephole init | sql | open | status | close | sweep | log | doctor | mcp`.
-- Five MCP tools: `peephole_status`, `list_tables`, `describe_table`, `explain`, `query`.
+- CLI: `daypass init | sql | open | status | close | sweep | log | doctor | mcp`.
+- Five MCP tools: `daypass_status`, `list_tables`, `describe_table`, `explain`, `query`.
 - Postgres only. Auth is an AWS RDS IAM token minted from your own AWS identity, or a
   connection URL / password for any other Postgres.
 - The guard: Postgres's own parser, one statement, `SELECT` or `EXPLAIN` only, a block list of
   dangerous functions, no row locks, no `SELECT INTO`, no `EXPLAIN ANALYZE`.
 - Caps: 500 rows, 2 KB per cell, 1 MB per result, 10 s statement timeout, read-only session.
-- Audit: one JSON line per call in `~/.peephole/audit.jsonl`.
+- Audit: one JSON line per call in `~/.daypass/audit.jsonl`.
 - Optional per-lease security-group rule for your current IP, removed on close or expiry.
 - A Claude Code plugin that registers the MCP server and ships the usage skill.
 
 ## Next (0.2)
 
-Milestone: [v0.2](https://github.com/Sajal0208/peephole/milestone/1).
+Milestone: [v0.2](https://github.com/Sajal0208/daypass/milestone/1).
 
 - **`hidden suggest` improvements.** Emit schema-qualified names, so a column list from a
   database with more than one schema is unambiguous and applies cleanly. *Status: planned.*
@@ -42,9 +42,9 @@ Milestone: [v0.2](https://github.com/Sajal0208/peephole/milestone/1).
 
 ## Later (1.0)
 
-Milestone: [v1.0](https://github.com/Sajal0208/peephole/milestone/2).
+Milestone: [v1.0](https://github.com/Sajal0208/daypass/milestone/2).
 
-- **Approval flow for `peephole open`.** A second person approves a lease from Slack (or a
+- **Approval flow for `daypass open`.** A second person approves a lease from Slack (or a
   similar channel) before it goes live, with the reason and TTL in the message. *Status: idea.*
 - **Hosted connector.** A small service that runs inside your network, connects outbound only,
   and keeps the database credential there; agents never hold it. *Status: idea.*
@@ -54,7 +54,7 @@ Milestone: [v1.0](https://github.com/Sajal0208/peephole/milestone/2).
 
 ## Not planned
 
-- Writes of any kind, even behind a flag. Peephole is the read-only path; use a different tool
+- Writes of any kind, even behind a flag. Daypass is the read-only path; use a different tool
   for migrations.
 - Loosening the result caps by default. They exist to keep the model's context small.
 

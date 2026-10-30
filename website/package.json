@@ -1,9 +1,9 @@
 {
-  "name": "peephole-website",
+  "name": "daypass-website",
   "private": true,
   "type": "module",
   "version": "0.0.0",
-  "description": "peepholedb.com: the website and docs for the peephole-db package (Astro + Starlight).",
+  "description": "daypass.sh: the website and docs for the daypass package (Astro + Starlight).",
   "scripts": {
     "sync-docs": "node scripts/sync-docs.mjs",
     "predev": "npm run sync-docs",

@@ -1,5 +1,5 @@
 {
-  "name": "peephole-db",
+  "name": "daypass",
   "version": "0.1.0",
   "description": "Temporary, read-only, audited database access for AI coding agents. A human opens a lease; Claude Code (or any MCP client) gets SELECT-only tools until it expires.",
   "keywords": [
@@ -18,7 +18,7 @@
   "author": "Vocobase <developers@vocobase.com>",
   "type": "module",
   "bin": {
-    "peephole": "./dist/cli/main.js"
+    "daypass": "./dist/cli/main.js"
   },
   "main": "./dist/mcp/index.js",
   "types": "./dist/mcp/index.d.ts",
@@ -48,10 +48,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Sajal0208/peephole.git"
+    "url": "https://github.com/Sajal0208/daypass.git"
   },
-  "homepage": "https://github.com/Sajal0208/peephole#readme",
-  "bugs": "https://github.com/Sajal0208/peephole/issues",
+  "homepage": "https://github.com/Sajal0208/daypass#readme",
+  "bugs": "https://github.com/Sajal0208/daypass/issues",
   "dependencies": {
     "@aws-sdk/client-ec2": "^3.1158.0",
     "@aws-sdk/client-sts": "^3.1158.0",

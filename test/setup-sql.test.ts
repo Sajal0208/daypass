@@ -4,10 +4,10 @@ import { resolve } from 'node:path';
 
 /**
  * The SQL itself can only be proven against a real Postgres (scripts/ci-integration.sh does
- * that). This checks the shape of the template the same way `peephole sql` renders it:
+ * that). This checks the shape of the template the same way `daypass sql` renders it:
  * one transaction, password set only on create, the three DO blocks still present.
  */
-function render(role = 'peephole_ro', hidden: string[] = ['customers.secret']): string {
+function render(role = 'daypass_ro', hidden: string[] = ['customers.secret']): string {
   const tpl = readFileSync(resolve(__dirname, '..', 'sql', 'setup-role.sql'), 'utf8');
   const arr = hidden.length ? `ARRAY[\n    ${hidden.map((c) => `'${c}'`).join(',\n    ')}\n  ]` : 'ARRAY[]::text[]';
   return tpl.replace(/__ROLE__/g, role).replace('__HIDDEN__', arr);
@@ -59,14 +59,14 @@ describe('sql/setup-role.sql template', () => {
   it('sets PASSWORD NULL only when the role is created, never on a re-run', () => {
     const hits = [...sql.matchAll(/PASSWORD NULL/g)].map((m) => m.index!);
     expect(hits).toHaveLength(1);
-    const createBranch = /IF NOT EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = 'peephole_ro'\) THEN([\s\S]*?)END IF;/.exec(sql);
+    const createBranch = /IF NOT EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = 'daypass_ro'\) THEN([\s\S]*?)END IF;/.exec(sql);
     expect(createBranch).not.toBeNull();
     const start = createBranch!.index;
     const end = start + createBranch![0].length;
     expect(hits[0]).toBeGreaterThan(start);
     expect(hits[0]).toBeLessThan(end);
     // The unconditional ALTER ROLE keeps the attribute lock-down but not the password reset.
-    const alter = /^ALTER ROLE "peephole_ro" WITH [^\n]*$/m.exec(sql)?.[0];
+    const alter = /^ALTER ROLE "daypass_ro" WITH [^\n]*$/m.exec(sql)?.[0];
     expect(alter).toMatch(/LOGIN NOCREATEDB NOCREATEROLE NOINHERIT CONNECTION LIMIT 5/);
     expect(alter).not.toMatch(/PASSWORD/);
   });
