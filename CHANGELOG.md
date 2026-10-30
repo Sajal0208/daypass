@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## [0.1.1](https://github.com/Sajal0208/daypass/compare/v0.1.0...v0.1.1) (2026-10-30)
+
+
+### Documentation
+
+* document the staged npm publishing flow ([#18](https://github.com/Sajal0208/daypass/issues/18)) ([5ccf9e1](https://github.com/Sajal0208/daypass/commit/5ccf9e17502618a21a6e01828eaaa80377a5b82c))
+
 ## 0.1.0 — 2026-10-28
 
 First release.
