@@ -63,6 +63,19 @@ The release-please workflow is a no-op while the repository is private. The firs
 release, `v0.1.0`, is tagged by hand (`git tag v0.1.0 && git push --tags`); release-please
 finds that tag and takes over from the next merge.
 
+### npm publishing is staged
+
+The `NPM_TOKEN` secret is a stage-only granular token. `release.yml` runs `npm publish --provenance`,
+which with that token *stages* the version instead of publishing it. A maintainer then approves it
+with 2FA (npm 11.15+ on a supported Node):
+
+```bash
+npx -y npm@latest stage list daypass
+npx -y npm@latest stage approve <stage-id>
+```
+
+This is deliberate: a human with 2FA is the last step before anything reaches the registry.
+
 ## Code of conduct
 
 See `CODE_OF_CONDUCT.md`. Be kind; assume good faith.
