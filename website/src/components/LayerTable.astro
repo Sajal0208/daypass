@@ -1,0 +1,103 @@
+---
+/** The seven layers, as in README.md "Why it is safe". Keep the two in step. */
+---
+
+<table class="layers">
+	<caption>Each layer is enough on its own. All of them run together.</caption>
+	<thead>
+		<tr><th scope="col">Layer</th><th scope="col">What it does</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<th scope="row">DB role</th>
+			<td>
+				<code>SELECT</code> on visible columns only. PII and secret columns are hidden at the
+				Postgres level, so <code>SELECT *</code> on those tables fails. <code>default_transaction_read_only</code>, 10 s statement timeout, 1 s lock timeout,
+				5 connections.
+			</td>
+		</tr>
+		<tr>
+			<th scope="row">No stored password</th>
+			<td>
+				On AWS RDS the role logs in with a 15-minute IAM token minted from <em>your</em> AWS
+				identity. Lose AWS access, lose Daypass access.
+			</td>
+		</tr>
+		<tr>
+			<th scope="row">Real parser</th>
+			<td>
+				Every statement goes through Postgres's own parser (<code>libpg-query</code>). One
+				statement; <code>SELECT</code> or <code>EXPLAIN</code> only; no <code>FOR UPDATE</code>, <code>SELECT INTO</code>, <code>EXPLAIN ANALYZE</code>, <code>pg_sleep</code>, <code>dblink</code>, <code>pg_read_file</code>, <code>set_config</code>, <code>nextval</code>, advisory locks, …
+			</td>
+		</tr>
+		<tr>
+			<th scope="row">Result caps</th>
+			<td>500 rows, 2 KB per cell, 1 MB per result. The model's context never floods.</td>
+		</tr>
+		<tr>
+			<th scope="row">Audit</th>
+			<td>
+				One JSON line per call in <code>~/.daypass/audit.jsonl</code>: time, caller (AWS ARN
+				for IAM targets), lease id, reason, SQL, rows, ms, allowed/blocked.
+			</td>
+		</tr>
+		<tr>
+			<th scope="row">Network</th>
+			<td>
+				Optional: punch your current IP into the DB security group for the lease, remove it on
+				close or expiry.
+			</td>
+		</tr>
+		<tr>
+			<th scope="row">TLS</th>
+			<td>Always verified. RDS targets pin the bundled AWS RDS CA.</td>
+		</tr>
+	</tbody>
+</table>
+
+<style>
+	.layers {
+		width: 100%;
+		max-width: 56rem;
+		border-collapse: collapse;
+		font-size: 0.925rem;
+		line-height: 1.55;
+	}
+	caption {
+		caption-side: top;
+		text-align: left;
+		color: var(--land-muted);
+		padding-bottom: 1rem;
+	}
+	th,
+	td {
+		text-align: left;
+		vertical-align: top;
+		padding: 0.75rem 0.75rem 0.75rem 0;
+		border-bottom: 1px solid var(--sl-color-hairline-light);
+		overflow-wrap: anywhere;
+	}
+	thead th {
+		font-size: 0.8rem;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--land-muted);
+		font-weight: 600;
+	}
+	tbody th {
+		color: var(--sl-color-white);
+		font-weight: 600;
+		white-space: nowrap;
+		width: 1%;
+		padding-right: 1.25rem;
+	}
+	td:last-child {
+		padding-right: 0;
+	}
+	@media (max-width: 30em) {
+		tbody th {
+			white-space: normal;
+			min-width: 6rem;
+		}
+	}
+</style>

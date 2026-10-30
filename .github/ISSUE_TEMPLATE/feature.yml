@@ -1,0 +1,21 @@
+name: Feature request
+description: Something Daypass should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation, not the solution. "I need Claude to look at our MySQL replica" beats "add MySQL".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How might it work?
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety
+      options:
+        - label: I have thought about whether this could weaken the read-only guarantee, and said so above.

@@ -1,0 +1,88 @@
+---
+/**
+ * The recorded demo (docs/assets/demo.gif, copied to /assets/ by scripts/sync-docs.mjs) with the
+ * real transcript as a text alternative. Readers who prefer reduced motion get the text by
+ * default; everyone can switch with the button.
+ */
+import transcript from './demo-output.txt?raw';
+
+const alt =
+	'Terminal recording: daypass open, status and doctor; a query that returns rows; SELECT * denied by Postgres; an UPDATE blocked by the parser; daypass log; daypass close.';
+---
+
+<div class="demo" data-mode="gif">
+	<div class="toolbar">
+		<button type="button" class="toggle" data-demo-toggle aria-pressed="false">Show as text</button>
+	</div>
+	<div class="gif">
+		<img src="/assets/demo.gif" width="1000" height="620" loading="lazy" alt={alt} />
+	</div>
+	<pre class="text land-code" tabindex="0" aria-label="Demo transcript">{transcript}</pre>
+</div>
+
+<style>
+	.demo {
+		max-width: 62.5rem;
+	}
+	.toolbar {
+		display: flex;
+		justify-content: flex-end;
+		margin-bottom: 0.5rem;
+	}
+	.toggle {
+		padding: 0.35rem 0.75rem;
+		border-radius: 0.4rem;
+		border: 1px solid var(--sl-color-gray-5);
+		background: transparent;
+		color: var(--sl-color-white);
+		font-size: 0.85rem;
+		cursor: pointer;
+	}
+	.toggle:hover {
+		background: var(--sl-color-bg-nav);
+	}
+	.gif img {
+		display: block;
+		width: 100%;
+		height: auto;
+		border: 1px solid var(--sl-color-hairline-light);
+		border-radius: 0.5rem;
+		background: var(--sl-color-bg-nav);
+	}
+	.text {
+		font-size: 0.8rem;
+		line-height: 1.5;
+		display: none;
+	}
+	.demo[data-mode='text'] .gif {
+		display: none;
+	}
+	.demo[data-mode='text'] .text {
+		display: block;
+	}
+	/* Without JavaScript the media query alone decides. */
+	@media (prefers-reduced-motion: reduce) {
+		.demo:not([data-mode='gif-forced']) .gif {
+			display: none;
+		}
+		.demo:not([data-mode='gif-forced']) .text {
+			display: block;
+		}
+	}
+</style>
+
+<script>
+	for (const demo of document.querySelectorAll<HTMLElement>('.demo')) {
+		const button = demo.querySelector<HTMLButtonElement>('[data-demo-toggle]');
+		if (!button) continue;
+		const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+		const paint = (text: boolean) => {
+			// `gif-forced` wins over the reduced-motion media query once the reader asked for it.
+			demo.dataset.mode = text ? 'text' : reduced ? 'gif-forced' : 'gif';
+			button.textContent = text ? 'Show animation' : 'Show as text';
+			button.setAttribute('aria-pressed', String(text));
+		};
+		paint(reduced);
+		button.addEventListener('click', () => paint(demo.dataset.mode !== 'text'));
+	}
+</script>

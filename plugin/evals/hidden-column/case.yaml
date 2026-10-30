@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: hidden-column
+context:
+  # Seeds $HOME/.daypass/hidden-columns.txt in the run's temporary home so the plugin's
+  # PII-guard hook lets a query naming `email` reach the (mocked) database, where the role
+  # answers `permission denied`. Needs `--scaffold` on the command line.
+  scaffold_script: fixture.sh

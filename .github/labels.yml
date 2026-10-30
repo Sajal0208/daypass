@@ -1,0 +1,32 @@
+# Reference only; created with `gh label create <name> --force --color <color> --description <desc>`.
+# Nothing reads this file. Keep it in step with the repo when a label is added or renamed.
+- name: area:guard
+  color: "b60205"
+  description: "The SQL guard: parser, allow/block rules, result caps"
+- name: area:role-sql
+  color: "d93f0b"
+  description: sql/setup-role.sql and the hidden-column role
+- name: area:cli
+  color: "0e8a16"
+  description: The daypass command line (init, open, close, doctor, ...)
+- name: area:mcp
+  color: "1d76db"
+  description: The MCP server and its five tools
+- name: area:plugin
+  color: "5319e7"
+  description: The Claude Code plugin and usage skill
+- name: area:website
+  color: "fbca04"
+  description: The docs site under website/
+- name: area:docs
+  color: "0075ca"
+  description: README, docs/, CHANGELOG, SUPPORT, ROADMAP
+- name: security
+  color: "e11d21"
+  description: Could weaken the read-only wall; handle per SECURITY.md
+- name: roadmap
+  color: "c5def5"
+  description: A request that shapes ROADMAP.md
+- name: dependencies
+  color: "0366d6"
+  description: Dependency bumps (Dependabot)
