@@ -71,15 +71,26 @@ JOIN pg_catalog.pg_class p ON p.oid = i.inhparent JOIN pg_catalog.pg_namespace p
 WHERE cn.nspname = ANY($1) OR pn.nspname = ANY($1)
 ORDER BY 1,2,3,4`;
 
-/** Generated columns and the column each is computed from (the setup refuses one derived from a hidden column). */
+/**
+ * Generated columns and the column each is computed from (the setup refuses one derived from a
+ * hidden column). Up to PG 15 pg_depend links column to column; from PG 16 it links the
+ * generation expression (pg_attrdef) to the source column.
+ */
 const GENERATED_SQL = `
-SELECT n.nspname AS schema, c.relname AS table, ga.attname AS column, ha.attname AS from_column
-FROM pg_catalog.pg_depend d
-JOIN pg_catalog.pg_class c ON c.oid = d.objid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-JOIN pg_catalog.pg_attribute ga ON ga.attrelid = d.objid AND ga.attnum = d.objsubid
-JOIN pg_catalog.pg_attribute ha ON ha.attrelid = d.refobjid AND ha.attnum = d.refobjsubid
-WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.refclassid = 'pg_catalog.pg_class'::regclass
-  AND d.objsubid > 0 AND d.refobjsubid > 0 AND d.objid = d.refobjid AND n.nspname = ANY($1)
+SELECT DISTINCT n.nspname AS schema, c.relname AS table, ga.attname AS column, ha.attname AS from_column
+FROM (SELECT d.objid AS relid, d.objsubid AS attnum, d.refobjsubid AS refattnum
+        FROM pg_catalog.pg_depend d
+       WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.refclassid = 'pg_catalog.pg_class'::regclass
+         AND d.objsubid > 0 AND d.refobjsubid > 0 AND d.objid = d.refobjid
+      UNION
+      SELECT ad.adrelid, ad.adnum, d.refobjsubid
+        FROM pg_catalog.pg_depend d JOIN pg_catalog.pg_attrdef ad ON ad.oid = d.objid
+       WHERE d.classid = 'pg_catalog.pg_attrdef'::regclass AND d.refclassid = 'pg_catalog.pg_class'::regclass
+         AND d.refobjid = ad.adrelid AND d.refobjsubid > 0 AND d.refobjsubid <> ad.adnum) g
+JOIN pg_catalog.pg_class c ON c.oid = g.relid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_catalog.pg_attribute ga ON ga.attrelid = g.relid AND ga.attnum = g.attnum AND ga.attgenerated <> ''
+JOIN pg_catalog.pg_attribute ha ON ha.attrelid = g.relid AND ha.attnum = g.refattnum
+WHERE n.nspname = ANY($1)
 ORDER BY 1,2,3,4`;
 
 /**

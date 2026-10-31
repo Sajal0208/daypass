@@ -286,15 +286,22 @@ BEGIN
 
   -- A generated column computed from a hidden column carries (part of) its value. Such a column
   -- must be listed too: say which. (`daypass hidden suggest` lists them; `hidden check` flags them.)
-  SELECT string_agg(format('%s.%I (generated from %s.%I)', d.objid::regclass, ga.attname, d.refobjid::regclass, ha.attname), ', '
-                    ORDER BY d.objid, d.objsubid) INTO msg
-    FROM pg_depend d
-    JOIN pg_attribute ga ON ga.attrelid = d.objid AND ga.attnum = d.objsubid
-    JOIN pg_attribute ha ON ha.attrelid = d.refobjid AND ha.attnum = d.refobjsubid
-   WHERE d.classid = 'pg_class'::regclass AND d.refclassid = 'pg_class'::regclass
-     AND d.objsubid > 0 AND d.refobjsubid > 0
-     AND (d.refobjid || '.' || d.refobjsubid) = ANY (hidden)
-     AND NOT (d.objid || '.' || d.objsubid) = ANY (hidden);
+  -- Up to PG 15 the dependency runs column to column; from PG 16 it runs from the column's
+  -- generation expression (pg_attrdef) to the source column. Check both.
+  SELECT string_agg(DISTINCT format('%s.%I (generated from %s.%I)', g.relid::regclass, ga.attname, g.refrelid::regclass, ha.attname), ', ') INTO msg
+    FROM (SELECT d.objid AS relid, d.objsubid AS attnum, d.refobjid AS refrelid, d.refobjsubid AS refattnum
+            FROM pg_depend d
+           WHERE d.classid = 'pg_class'::regclass AND d.refclassid = 'pg_class'::regclass
+             AND d.objsubid > 0 AND d.refobjsubid > 0
+          UNION
+          SELECT ad.adrelid, ad.adnum, d.refobjid, d.refobjsubid
+            FROM pg_depend d JOIN pg_attrdef ad ON ad.oid = d.objid
+           WHERE d.classid = 'pg_attrdef'::regclass AND d.refclassid = 'pg_class'::regclass
+             AND d.refobjsubid > 0 AND NOT (d.refobjid = ad.adrelid AND d.refobjsubid = ad.adnum)) g
+    JOIN pg_attribute ga ON ga.attrelid = g.relid AND ga.attnum = g.attnum AND ga.attgenerated <> ''
+    JOIN pg_attribute ha ON ha.attrelid = g.refrelid AND ha.attnum = g.refattnum
+   WHERE (g.refrelid || '.' || g.refattnum) = ANY (hidden)
+     AND NOT (g.relid || '.' || g.attnum) = ANY (hidden);
   IF msg IS NOT NULL THEN
     RAISE EXCEPTION 'column(s) derived from a hidden column would be readable: %. Add each to the hidden list too, then re-run.', msg;
   END IF;

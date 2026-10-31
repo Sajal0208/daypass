@@ -62,7 +62,7 @@ export interface RuleRef {
 export const DATA_READING_FUNCTIONS =
   /^((query|cursor|table|schema|database)_to_xml|ts_(stat|rewrite)$|lo_|pg_read_|pg_ls_|pg_stat_file$|pg_stat_get_activity$|current_setting$|dblink|crosstab|xpath_table$)/;
 
-/** A generated column and the column it is computed from (pg_depend, column to column). */
+/** A generated column and the column it is computed from (pg_depend; via pg_attrdef from PG 16). */
 export interface GeneratedDep {
   schema: string;
   table: string;
