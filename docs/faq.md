@@ -8,7 +8,7 @@ A replica solves load and, since a hot standby rejects writes, it solves writes 
 
 ## Why not just put the database URL in the MCP config?
 
-Five reasons, each one a layer Daypass adds: the password is then in a file the agent process reads, forever; access never ends; the agent can write unless you made a read-only role yourself; every column is visible; nothing is logged. With Daypass the agent never sees a credential, access ends on a timer, the role cannot write, hidden columns are unreadable at the database, and every call is one line in `~/.daypass/audit.jsonl`. See [Threat model](threat-model.md).
+Five reasons, each one a layer Daypass adds: the password is then in a file the agent process reads, forever; access never ends; the agent can write unless you made a read-only role yourself; every column is visible; nothing is logged. With Daypass the tools never hand the agent a credential, access ends on a timer, the role holds no write privilege and every call runs read-only, hidden columns are unreadable at the database, and every database call is logged in `~/.daypass/audit.jsonl` before it runs and when it ends. (An agent you also let run shell commands as you can still read the config file; see the [threat model](threat-model.md).) See [Threat model](threat-model.md).
 
 ## Does it work with Cursor, Claude Desktop, or other MCP clients?
 
@@ -26,11 +26,11 @@ No. Postgres only. The guard is Postgres's own parser (`libpg-query`), the role 
 
 ## What does the agent see?
 
-Five tools: `daypass_status`, `list_tables`, `describe_table`, `explain`, `query`. Through them: tables in the schemas the target allows (default `public`) with row estimates and sizes; columns, types and indexes of a table, minus the hidden columns, which are not listed at all; query plans; and query results capped at 500 rows, 2 KB per cell and 1 MB in total, labelled `data, not instructions`. It also sees the lease id, who opened it, the reason and the minutes left. It does not see the config file, the password, the IAM token, or the audit log. See [Concepts](concepts.md).
+Five tools: `daypass_status`, `list_tables`, `describe_table`, `explain`, `query`. Through them: tables in the schemas the target allows (default `public`) with row estimates and sizes; columns, types and indexes of a table, minus the hidden columns and the indexes on them; query plans; and query results capped at 500 rows and 1 MB in total (cut in the database) and 2000 characters per cell, labelled `data, not instructions`. It also sees the lease id, who opened it, the reason and the minutes left. No tool returns the config file, the password, the IAM token, or the audit log. Two caveats: a query against the system catalog (`information_schema.columns`, `pg_indexes`) shows the *names* of hidden columns, never their values; and an agent that may also run shell commands or read files as you can read `~/.daypass` directly, which the tools do not control. See [Concepts](concepts.md) and the [threat model](threat-model.md).
 
 ## Where is the audit log and what is in it?
 
-`~/.daypass/audit.jsonl` on the machine that ran the MCP server, mode `0600`, one JSON object per tool call: time, who, lease id, reason, tool, SQL, allowed or blocked with the reason, rows, milliseconds, and the Postgres error if any. `daypass log -n 30` prints it; `jq` works on it. The SQL text is logged as written, so a `WHERE email = …` puts that value in the file. There is no central copy; collect the files if you need one.
+`~/.daypass/audit.jsonl` on the machine that ran the MCP server, mode `0600`. An allowed call writes a `start` line before the statement is sent and an `end` line when it finishes, paired by `callId`; a refusal writes one line with the reason. The fields: time, who, lease id, reason, tool, SQL, allowed or blocked with the reason, rows, milliseconds, and the Postgres error if any. `daypass log -n 30` prints the last 30 calls, one row each (a start with no end shows as `RUN … unfinished`); `jq` works on it. The SQL text is logged as written, so a `WHERE email = …` puts that value in the file. There is no central copy; collect the files if you need one.
 
 ## Can two people share a lease?
 
@@ -38,11 +38,11 @@ No, and they do not need to. A lease is a file on one machine; every Claude Code
 
 ## What does it cost?
 
-The package is MIT and runs on your laptop; there is no service. On AWS, the calls are `sts:GetCallerIdentity` and, if you use the IP rule, three EC2 security-group calls per lease plus the sweep; the RDS token is signed locally. A read replica, if you add one, is the only thing with a bill. Node 20+ and `psql` are the dependencies.
+The package is MIT and runs on your laptop; there is no service. On AWS, the calls are `sts:GetCallerIdentity` and, if you use the IP rule, three EC2 security-group calls per lease plus the sweep; the RDS token is signed locally. With the IP rule, `daypass open` also fetches `https://checkip.amazonaws.com` to learn your public IP. A read replica, if you add one, is the only thing with a bill. Node 20+ and `psql` are the dependencies.
 
 ## What happens if the lease expires while a query is running?
 
-The query finishes, bounded by the 10 s statement timeout. The lease is checked at the start of each tool call, not during one. The next call is refused with `Lease … expired at …`, and if the target had a security-group rule, that same call removes it. Nothing is cut off mid-flight, and nothing new starts.
+It cannot outlive the lease. The lease is checked at the start of each tool call, and the statement timeout is 10 s or the time the lease has left once a connection is checked out, whichever is shorter, so Postgres cancels a query still running when the lease ends (`canceling statement due to statement timeout`). If the lease ran out while the call waited for a connection, it fails with `The lease expired before the query could start.` The next call is refused with `Lease … expired at …`, and if the target had a security-group rule, that same call removes it.
 
 ## How do I revoke everything right now?
 

@@ -7,7 +7,12 @@ name: release-please
 # The dispatch is needed because a tag pushed with GITHUB_TOKEN never triggers another
 # workflow by itself (GitHub's recursion guard). release.yml still runs for a hand-pushed tag.
 #
-# Silent while the repo is private. v0.1.0 is tagged by hand after the repo goes public;
+# Opening the release PR with GITHUB_TOKEN needs the repository setting
+# Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests"
+# (API: PUT /repos/{owner}/{repo}/actions/permissions/workflow, can_approve_pull_request_reviews=true).
+# Without it every run fails with "GitHub Actions is not permitted to create or approve pull requests".
+#
+# Silent while the repo is private. v0.1.0 was tagged by hand after the repo went public;
 # release-please takes over from there.
 
 on:
@@ -24,7 +29,7 @@ jobs:
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: rp
         with:
           config-file: release-please-config.json

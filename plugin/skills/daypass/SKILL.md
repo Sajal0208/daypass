@@ -20,14 +20,15 @@ reply with exactly one runnable line and nothing else, then stop:
 daypass open <target> --ttl 45m --reason "<the user's question in at most 8 words>"
 ```
 
-Use the target name from the status output (an expired lease names it) or from the
-config if you already know it; otherwise leave `<target>`. Never run `daypass open`
-yourself, never ask for a password, never ask for a connection URL. The user opens the
-door; you only tell them the exact line. When they say it is open, call
-`daypass_status` again and go on.
+`daypass_status` does not name the target (`Expired at <ISO>` is all it says). Use the
+target from the conversation or the config if you already know it; otherwise leave
+`<target>`. Never run `daypass open` yourself, never ask for a password, never ask for a
+connection URL. The user opens the door; you only tell them the exact line. When they
+say it is open, call `daypass_status` again and go on.
 
-Any other tool failing with `No active Daypass lease…` means the same thing: send the
-line, stop.
+Any other tool failing with `No active Daypass lease…` or `Lease <id> for "<target>"
+expired at …` means the same thing: send the line, stop. That refusal does name the
+target; use it.
 
 ## 2. Learn the shape before you query
 

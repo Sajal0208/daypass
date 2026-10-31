@@ -13,7 +13,11 @@ argument-hint: "<target>"
 daypass hidden check --file "${DAYPASS_HIDDEN_FILE:-$HOME/.daypass/hidden-columns.txt}" --live <target>
 ```
 
-No lease is needed. Exit 0 prints `hidden list matches the schema (...)`: report it and stop. Exit 1
+No lease is needed to run it, but on an RDS target with `securityGroupId` the per-lease IP rule is
+what opens the port: with no lease there is no rule and `--live` can time out at TCP (`timeout after
+5 s`). Then either run it while a lease is open, or point at the schema instead (`--prisma
+<path>` / `--url "$OWNER_URL"` in the admin's shell). Exit 0 prints `hidden list matches the schema
+(...)`: report it and stop. Exit 1
 prints up to two lists; explain each and propose the fix, as text only (`#` to end of line is a comment
 on any line of the file):
 

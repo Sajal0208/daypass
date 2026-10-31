@@ -29,7 +29,7 @@ The installed package exposes the same logic without a checkout:
 daypass hidden check --file hidden-columns.txt --prisma prisma/schema.prisma
 ```
 
-It prints the `Listed (hidden or !allowed) but not in the schema` and `Sensitive-looking but not hidden` lists and exits 1 if either is non-empty. `--live <target>` and `--url "$OWNER_URL"` do the same against a running database instead of the Prisma file, which also catches tables that were created outside Prisma. See [Hidden columns](hidden-columns.md).
+It prints the `Listed (hidden or !allowed) but not in the schema` and `Sensitive-looking but not hidden` lists, plus `Columns both hidden and !allowed`, and exits 1 if any is non-empty. `--live <target>` and `--url "$OWNER_URL"` do the same against a running database instead of the Prisma file, which also catches tables that were created outside Prisma, generated columns derived from a hidden column, columns hidden on a partition or child only, and (for information) the views the setup will withhold. See [Hidden columns](hidden-columns.md).
 
 ## In your app's CI
 
@@ -60,4 +60,4 @@ The job tells you the list is out of date. It does not apply anything. After it 
 
 ## What the heuristic matches
 
-Column names, never values. The heuristic, from `src/core/hidden.ts`, splits the name into snake_case parts (camelCase too: `phoneNumber` becomes `phone_number`) and flags it when a part is one of `phone`, `mobile`, `email`, `token`, `secret`, `key`, `transcript`, `password`, `passwd`, `address`, `ssn`, `iban`, `card`, `dob`, `birth`, `birthday`, `birthdate`, `salt`, `otp`, `pin`, `passport`, `license`, `licence`, `routing`, `national`, or when the name starts with `encrypted_` or is exactly `prompt_snapshot`, `lines` or `credentials`. A name ending in a safe tail is left alone: `_verified`, `_confirmed`, `_count`, `_used`, `_at`, `_id`, `_type`, `_status`, `_enabled`, `_required`, `_country`, `_layout`, `_limit`, `_prefix`, `_version`, `_expiry`, `_expires`, `_expiration`, `_rounds`, `_domain` (so `email_verified`, `phone_country`, `key_prefix` and `tokens_used` are not flagged). The exceptions that are always flagged despite the tail: `national`, `tax` or `government` followed by `_id` or `_number`, and `account_number` / `bank_account_number` (`account_id` is an ordinary foreign key and is not flagged). The list is shared by the test and the CLI. A phone number inside a `metadata` JSON column is found only if the column itself is named for it.
+Column names, never values. The heuristic is `looksSensitive` in `src/core/hidden.ts`; [Hidden columns](hidden-columns.md#generate-a-first-draft) lists the words, the special names, the safe tails and the always-flagged exceptions. The list is shared by the test and the CLI. A column named `metadata`, `payload`, `body` or `notes` is flagged as free text; a phone number inside a column called `data` or `raw` is not found.

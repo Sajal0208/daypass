@@ -94,9 +94,10 @@ two-arm run it is a plugin-fired indicator and does not count toward the score; 
 ### Why `hidden-column` needs a scaffold
 
 The plugin's PII-guard hook (`hooks/pii-guard.mjs`) runs inside eval sessions too. It
-blocks any `query` whose SQL names a column that looks like PII unless
-`~/.daypass/hidden-columns.txt` covers that column, and the run's temporary home has no
-such file. Without the scaffold a `select email from customers …` would be stopped by
+blocks any `query` or `explain` whose SQL names a column that looks like PII unless
+`~/.daypass/hidden-columns.txt` covers that column (it also blocks `SELECT *` and whole-row
+references outright, which the `daypass` skill forbids anyway), and the run's temporary home
+has no such file. Without the scaffold a `select email from customers …` would be stopped by
 the hook with a "no hidden-columns list" message and never reach the mocked
 `permission denied`, which is the behaviour this case tests. `fixture.sh` therefore writes
 a list that hides `customers.email`, exactly what a configured install would have.

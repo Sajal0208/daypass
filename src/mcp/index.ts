@@ -15,4 +15,4 @@ export {
 export type { Config, TargetConfig, ResolvedTarget } from './state.js';
 export { closePool } from './db.js';
 export * from './sg.js';
-export { getPool } from './db.js';
+export { getPool, runBounded, STATEMENT_TIMEOUT_MS, MAX_WIRE_BYTES } from './db.js';

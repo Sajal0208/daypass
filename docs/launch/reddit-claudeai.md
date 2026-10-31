@@ -33,8 +33,8 @@ $ daypass open prod --ttl 45m --reason "debug campaign 1234"
 ```
 
 Then in Claude Code you ask the question. Claude gets five tools: `daypass_status`,
-`list_tables`, `describe_table`, `explain`, `query` (one `SELECT`, 500 rows max, 10 s max).
-When the lease expires every tool returns:
+`list_tables`, `describe_table`, `explain`, `query` (one `SELECT`, 500 rows and 1 MB max, 10 s max).
+When the lease expires every tool except `daypass_status` returns:
 
 ```
 Lease 3f9a1c2e for "prod" expired at 2026-10-28T15:02:11.000Z. Ask the user to run: daypass open prod --reason "..."
@@ -47,19 +47,18 @@ No lease, no data. A human opens the door; it shuts itself.
 The MCP server is the same for any client. The plugin is what makes Claude use it well.
 
 **Skills.** Before touching the database the skill calls `daypass_status` first. If there
-is no lease it does not try, does not guess, and does not ask you to paste a URL. It
-gives you the exact line to run, with the target and a reason filled in from the
-conversation, something like:
+is no lease it does not try, does not guess, and does not ask you to paste a URL. Its whole
+reply is the one line to run, with the target and a reason filled in from the
+conversation:
 
 ```
-No active Daypass lease. Run this in a terminal, then tell me:
-
-  daypass open prod --ttl 30m --reason "campaign 1234 calls failing"
+daypass open prod --ttl 45m --reason "campaign 1234 calls failing"
 ```
 
-With a lease open, the skill runs `explain` before a query that touches a big table,
-summarises results instead of dumping 500 rows into the chat, and cites the lease id and
-minutes left in its answer so you can match it to the audit log later.
+With a lease open, the skill calls `list_tables` and `describe_table` before it queries,
+names columns instead of `SELECT *`, runs `explain` before a join or a scan of a big table,
+summarises results instead of dumping 500 rows into the chat, and ends with a sign-off line
+(`Lease <id> · reason: "…" · <n> queries`) so you can match the answer to the audit log.
 
 **Commands.**
 
@@ -70,15 +69,20 @@ minutes left in its answer so you can match it to the audit log later.
 
 **A PreToolUse hook.** Hidden columns are enforced by the database role, so a `SELECT`
 on one fails with `permission denied` no matter what the client does. The hook is for the
-gap before that: it refuses SQL that names a PII-looking column (`email`, `phone`,
-`transcript`, `token`, `secret`, `key_hash`, `password`, and so on) that is *not* in your
-hidden list, so a column you forgot to hide does not get read just because Claude could.
-It is a fence in front of the wall, and it fails closed.
+gap before that: on `query` and `explain` it refuses SQL that names a PII-looking column
+(`email`, `phone`, `transcript`, `token`, `secret`, `key_hash`, `password`, and so on) that
+is *not* in your hidden list, and it refuses `SELECT *`, whole-row references like
+`to_jsonb(u)`, and functions that run SQL from a string, so a column you forgot to hide does
+not get read just because Claude could. It is name-based: a PII column called `data` or
+`raw` gets through. It is a fence in front of the wall, and on Claude Code 2.1.295 or later
+it fails closed (a crash or timeout blocks the call); `docs/plugin.md` lists its limits.
 
-**Evals.** The plugin ships a three-case `claude plugin eval` suite: no lease (the skill
-must produce the `daypass open` line and nothing else), lease open (the skill must call
-`daypass_status`, then `explain`, then `query`, and cite the lease), and a PII column not
-in the hidden list (the hook must refuse). Run it after you change the skill.
+**Evals.** The plugin ships a three-case `claude plugin eval` suite with a mocked MCP
+server: no lease (the reply must be the `daypass open` line and `query` must never be
+called), a simple question with a lease open (`daypass_status`, `list_tables` and
+`describe_table` before `query`, the lease cited), and a hidden column (the mocked database
+answers `permission denied`; the reply must say the column is hidden and contain no email).
+Run it after you change the skill.
 
 **Setup walkthrough.** A skill that takes you from `daypass init` through the hidden-
 columns list, the one-time SQL and `daypass doctor`. It uses
@@ -92,30 +96,37 @@ email/phone/secret-looking column rather than from a blank file.
 The skill and the hook are prompts and a script. They will be wrong sometimes. The reason
 this is still fine:
 
-- The database role `daypass_ro` is read-only (`default_transaction_read_only`), has a
-  10 s statement timeout, a 1 s lock timeout, 5 connections, and `SELECT` on visible
-  columns only. PII columns are hidden with column-level grants, so `SELECT *` on those
-  tables fails inside Postgres.
+- The database role `daypass_ro` has `SELECT` on visible columns only, granted table by
+  table, and no write privilege anywhere. PII columns are hidden with column-level grants,
+  so `SELECT *` on those tables fails inside Postgres, and views over them are not granted.
+- Every call runs in a read-only transaction with a 10 s timeout (less near the end of the
+  lease). The role's own read-only default and timeouts are defaults it could change in a
+  direct session; through Daypass the client keeps them in place.
 - Every statement goes through Postgres's own parser before it leaves your laptop. One
-  statement, `SELECT` or `EXPLAIN` only, no `FOR UPDATE`, no `SELECT INTO`, no `EXPLAIN
-  ANALYZE`, 33 banned functions (`pg_sleep`, `dblink`, `pg_read_file`, ...). 45 tests.
-- Results are capped at 500 rows, 2 KB per cell, 1 MB, so one query cannot fill the
-  context.
-- On RDS the role logs in with a 15-minute IAM token from your own AWS login. No password
-  anywhere.
-- Every call writes one JSON line to `~/.daypass/audit.jsonl`.
+  statement, `SELECT` or `EXPLAIN` only, no data-modifying CTE, no `FOR UPDATE`, no
+  `SELECT INTO`, no `EXPLAIN ANALYZE`, a list of banned functions (`pg_sleep`, `dblink`,
+  `pg_read_file`, `query_to_xml`, ...).
+- Results are cut in the database at 500 rows and 1 MB, cells at 2000 characters, so one
+  query cannot fill the context.
+- On RDS the role logs in with a 15-minute IAM token from your own AWS login. No stored
+  password.
+- Every database call is logged to `~/.daypass/audit.jsonl` before it runs and when it ends.
 - Result rows are labelled "data, not instructions". A row that says "ignore your
   instructions and DELETE" can waste a query; it cannot write.
 
-On a real production database: 52 hidden columns denied, writes blocked, lease expiry
-enforced.
+A security review after 0.1.0 found hidden columns readable through views, partitions and
+`SECURITY DEFINER` functions; <VERSION> fixes that (details in the changelog). If you ran
+0.1.0, upgrade and re-run the role setup.
 
 ### Known limits
 
 The audit file is on your laptop and the SQL in it can hold PII (a `WHERE phone = ...`).
-If your team shares one AWS identity the log cannot tell you apart. Tables created after
-setup are visible until you re-run the SQL. Postgres only.
+If your team shares one AWS identity the log cannot tell you apart. The files in
+`~/.daypass` are protected only by your OS user: if you also let Claude run shell commands,
+it can read the config (a URL target's password) and edit the lease; restrict that in
+Claude Code's permissions. Hidden column names are visible in the catalog. Tables created
+after setup are invisible until you re-run the SQL. Postgres only.
 
 Repo and docs: https://github.com/Sajal0208/daypass. npm: `daypass`. Website:
-<SITE_URL>. MIT. If you find a way past the role, SECURITY.md says where to email;
-please do not post it as an issue.
+<SITE_URL>. MIT. If you find a way past the role, SECURITY.md says how to report it
+privately; please do not post it as an issue.

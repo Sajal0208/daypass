@@ -1,6 +1,6 @@
-export { checkSql } from './guard.js';
+export { checkSql, canonicalSql, isBannedFunction, BANNED_FUNCTION_PATTERNS, MAX_SQL_BYTES } from './guard.js';
 export type { GuardResult, SqlKind } from './guard.js';
-export { wrapWithLimit, shapeRows } from './shape.js';
+export { wrapWithLimit, wrapWithBudget, shapeRows, shapeBudgetRows, parseJsonPreservingBigInts, TRUNCATED_ROW_PREVIEW_CHARS } from './shape.js';
 export type { ShapeOptions, Shaped } from './shape.js';
 export { formatAudit } from './audit.js';
 export type { AuditEvent } from './audit.js';

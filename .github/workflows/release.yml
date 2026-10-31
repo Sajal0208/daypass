@@ -2,10 +2,20 @@ name: Release
 
 # Publishes to npm with provenance and writes the GitHub release notes for a vX.Y.Z tag.
 #
+# npm authentication is trusted publishing (OIDC): this workflow uses no npm token. npm trusts
+# this exact workflow file (release.yml) in Sajal0208/daypass, running in the `npm-publish`
+# GitHub environment, and mints a short-lived credential for each run. The environment is meant
+# to have a required reviewer (a human approves every publish) and a deployment policy that only
+# admits v* tags.
+#
+# PENDING maintainer setup: none of that exists yet. Until the `npm-publish` environment is
+# created with its reviewer and tag policy, GitHub creates it on the first run WITHOUT any
+# protection, and until the npm Trusted Publisher is configured the publish step fails. See
+# "Maintainer setup (pending)" in CONTRIBUTING.md for the steps, in order.
+#
 # Normally the tag comes from merging the release-please PR (.github/workflows/release-please.yml),
 # which then dispatches this workflow on the tag. A hand-pushed tag works the same way:
 #   git tag v0.1.0 && git push --tags
-# Needs an npm granular access token with publish rights in the NPM_TOKEN repo secret.
 
 on:
   push:
@@ -13,33 +23,130 @@ on:
   workflow_dispatch: # run with the tag as the ref; release-please does this after tagging
 
 permissions:
-  contents: write
-  id-token: write # npm provenance
+  contents: read
 
+# A hand-pushed tag and a release-please dispatch can both start a run for the same tag; run
+# them one after the other (the second then fails at npm, which refuses to republish a version).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Three jobs so that untrusted code never shares a job with the publish credential:
+#   build          checkout, npm ci, build, the test suite, pack + smoke test. Runs every
+#                  dependency and dev dependency, so it gets contents: read and nothing else.
+#   publish        downloads the tarball, checks its sha256 against build's, and runs only
+#                  `npm publish`. This is the one job with id-token: write and the npm-publish
+#                  environment; it executes no code from the repository or its dependencies.
+#   release-notes  contents: write for the GitHub release, nothing else.
+# (`--ignore-scripts` in build keeps install scripts quiet, but it is the job split, not that
+# flag, that keeps a compromised dependency away from the OIDC token: tests and the build still
+# execute dependency code.)
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tgz: ${{ steps.smoke.outputs.tgz }}
+      sha256: ${{ steps.smoke.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check the ref is a tag that matches package.json version
+        if: ${{ github.ref_type != 'tag' }}
+        run: |
+          echo "ref ${GITHUB_REF} is not a tag; run this on a vX.Y.Z tag"
+          exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          # No `cache: npm`: a release build should not restore a cache other workflows can write.
+      - name: Check the tag matches package.json version
+        run: |
+          v="v$(node -p "require('./package.json').version")"
+          [ "$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != package version $v"; exit 1; }
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm test
+      # What users will install is the packed tarball, not the checkout: install it into an empty
+      # directory and run the CLI from there, so a missing "files" entry or a broken bin fails here.
+      # This exact tarball (checked by sha256) is what the publish job publishes.
+      - name: Pack, install the tarball into a clean directory and smoke-test the CLI
+        id: smoke
+        run: |
+          set -euo pipefail
+          tgz="$(npm pack --silent | tail -n 1)"
+          expected="$(node -p "require('./package.json').version")"
+          root="$PWD"
+          dir="$(mktemp -d)"
+          cd "$dir"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund --ignore-scripts "$root/$tgz"
+          got="$(./node_modules/.bin/daypass --version)"
+          [ "$got" = "$expected" ] || { echo "daypass --version printed '$got', expected '$expected'"; exit 1; }
+          sql="$(./node_modules/.bin/daypass sql --role daypass_smoke_role)"
+          printf '%s\n' "$sql" | head -n 1
+          printf '%s\n' "$sql" | grep -q 'daypass_smoke_role' || { echo "role name missing from 'daypass sql --role daypass_smoke_role' output"; exit 1; }
+          cd "$root"
+          rm -rf "$dir"
+          sha="$(sha256sum "$tgz" | cut -d' ' -f1)"
+          echo "$tgz sha256 $sha"
+          { echo "tgz=$tgz"; echo "sha256=$sha"; } >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-tarball
+          path: ${{ steps.smoke.outputs.tgz }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: npm-publish
+      url: https://www.npmjs.com/package/daypass
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing + provenance
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-tarball
+          path: release
+      - name: Verify the tarball is the one build smoke-tested
+        env:
+          TGZ: ${{ needs.build.outputs.tgz }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          case "$TGZ" in */*|'') echo "unexpected tarball name '$TGZ'"; exit 1 ;; esac
+          echo "$SHA256  release/$TGZ" | sha256sum -c -
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
-      - name: Check the ref is a tag that matches package.json version
+      # Trusted publishing needs npm >= 11.5.1; Node 22 ships npm 10. Pinned, not @latest: latest
+      # is already a new major (npm 12) with a narrower engines range. Bump deliberately.
+      - name: Upgrade npm for trusted publishing
         run: |
-          [ "${GITHUB_REF_TYPE}" = tag ] || { echo "ref ${GITHUB_REF} is not a tag; run this on a vX.Y.Z tag"; exit 1; }
-          v="v$(node -p "require('./package.json').version")"
-          [ "$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != package version $v"; exit 1; }
-      - run: npm publish --provenance --access public
+          npm install -g --ignore-scripts npm@11.21.1
+          npm --version
+      # Publishing the tarball ships exactly what build tested and runs no lifecycle scripts.
+      - name: Publish the smoke-tested tarball
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TGZ: ${{ needs.build.outputs.tgz }}
+        run: npm publish "release/$TGZ" --provenance --access public
+
+  release-notes:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # GitHub release notes
+    steps:
       # release-please has usually created this release already, with the CHANGELOG section
       # as its body. append_body keeps that and adds GitHub's generated notes below it.
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           generate_release_notes: true
           append_body: true
