@@ -19,14 +19,14 @@ const out = path.join(publicDir, 'og.png');
 
 const { width, height } = ogImage;
 
-// Palette: the site's dark background and the teal accent (Tailwind teal-400/600/950 shades).
-const BG = '#0b1215';
-const PANEL = '#101a1e';
-const BORDER = '#1f3137';
-const ACCENT = '#2dd4bf';
-const ACCENT_DEEP = '#0f766e';
+// Palette: the site's near-black background and the terminal-green accent.
+const BG = '#050505';
+const PANEL = '#0b0b0b';
+const BORDER = '#262626';
+const ACCENT = '#39ff14';
+const ACCENT_DEEP = '#0c4a0d';
 const TEXT = '#ffffff';
-const MUTED = '#8aa0a6';
+const MUTED = '#a3a3a3';
 
 const SANS = "system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif";
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
@@ -64,11 +64,11 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${
 
   <!-- Daypass mark (same geometry as favicon.svg, scaled 32 -> 88). -->
   <g transform="translate(80 84) scale(2.75)">
-    <rect width="32" height="32" rx="7" fill="${ACCENT_DEEP}"/>
-    <circle cx="16" cy="16" r="9" fill="none" stroke="${TEXT}" stroke-width="2.5"/>
-    <circle cx="16" cy="16" r="4" fill="${TEXT}"/>
+    <rect width="32" height="32" fill="${PANEL}" stroke="${BORDER}" stroke-width="0.5"/>
+    <circle cx="16" cy="16" r="9" fill="none" stroke="${ACCENT}" stroke-width="2.5"/>
+    <circle cx="16" cy="16" r="4" fill="${ACCENT}"/>
   </g>
-  <text x="196" y="151" font-family="${SANS}" font-size="72" font-weight="700" fill="${ACCENT}" letter-spacing="-1">${wordmark}</text>
+  <text x="196" y="151" font-family="${MONO}" font-size="72" font-weight="700" fill="${ACCENT}" letter-spacing="-1">${wordmark}</text>
 
   <text font-family="${SANS}" font-size="46" font-weight="600" fill="${TEXT}">
     <tspan x="80" y="300">${line1}</tspan>
@@ -76,8 +76,8 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${
   </text>
 
   <!-- Install command. -->
-  <rect x="80" y="430" width="700" height="88" rx="14" fill="${PANEL}" stroke="${BORDER}" stroke-width="2"/>
-  <text x="112" y="486" font-family="${MONO}" font-size="32" fill="${MUTED}">$ <tspan fill="${TEXT}">${esc(installCommand)}</tspan></text>
+  <rect x="80" y="430" width="700" height="88" fill="${PANEL}" stroke="${BORDER}" stroke-width="2"/>
+  <text x="112" y="486" font-family="${MONO}" font-size="32" fill="${ACCENT}">$ <tspan fill="${TEXT}">${esc(installCommand)}</tspan></text>
 
   <text x="${width - 80}" y="${height - 48}" text-anchor="end" font-family="${MONO}" font-size="24" fill="${MUTED}">${esc(new URL(siteUrl).host)}</text>
 </svg>`;

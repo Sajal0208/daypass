@@ -1,10 +1,13 @@
 /*
  * Styles for the landing page (src/pages/index.astro), which uses a plain layout instead of
- * Starlight's. global.css (imported by the layout) brings Tailwind's theme, the teal accent and
+ * Starlight's. global.css (imported by the layout) brings Tailwind's theme, the green accent and
  * the Starlight palette variables (--sl-color-gray-*, --sl-color-accent*) that the
  * @astrojs/starlight-tailwind plugin defines on :root for both themes. Starlight's own base
  * stylesheet (which derives --sl-color-text, --sl-color-bg, ... from that palette) only loads on
  * Starlight routes, so the few derived tokens this page needs are mapped here, the same way.
+ *
+ * The look is a terminal: near-black, one green accent, mono headings and labels, square
+ * corners, 1px lines.
  */
 @layer base {
 	:root {
@@ -15,20 +18,24 @@
 		--sl-color-bg-inline-code: var(--sl-color-gray-5);
 		--sl-color-hairline-light: var(--sl-color-gray-5);
 		--sl-color-hairline: var(--sl-color-gray-6);
-		/* Primary button: light text on teal-700 (light) / dark text on teal-200 (dark), both ≥ 4.5:1. */
-		--land-btn-bg: var(--color-accent-200);
-		--land-btn-fg: var(--color-zinc-900);
-		--land-btn-bg-hover: var(--color-accent-100);
+		/* Primary button: black on neon green (dark) / white on green-700 (light), both ≥ 4.5:1. */
+		--land-btn-bg: var(--color-accent-400);
+		--land-btn-fg: #000;
+		--land-btn-bg-hover: var(--color-accent-300);
 		--land-muted: var(--sl-color-gray-3);
+		--land-line: var(--sl-color-gray-5);
+		--land-panel: #0b0b0b;
 	}
 	:root[data-theme='light'] {
 		--sl-color-text-accent: var(--sl-color-accent);
-		--sl-color-bg-nav: var(--sl-color-gray-7);
 		--sl-color-bg-inline-code: var(--sl-color-gray-6);
-		--sl-color-hairline-light: var(--sl-color-gray-6);
+		--sl-color-hairline-light: var(--sl-color-gray-5);
+		--sl-color-hairline: var(--sl-color-gray-5);
 		--land-btn-bg: var(--color-accent-700);
 		--land-btn-fg: #fff;
 		--land-btn-bg-hover: var(--color-accent-800);
+		--land-line: #d4d4d4;
+		--land-panel: #fafafa;
 	}
 
 	html {
@@ -58,9 +65,10 @@
 	h3 {
 		margin: 0;
 		color: var(--sl-color-white);
-		line-height: 1.2;
-		font-weight: 600;
-		letter-spacing: -0.01em;
+		font-family: var(--font-mono);
+		line-height: 1.15;
+		font-weight: 700;
+		letter-spacing: -0.03em;
 		overflow-wrap: anywhere;
 	}
 	p {
@@ -72,26 +80,29 @@
 	}
 	a:hover {
 		text-decoration: underline;
+		text-underline-offset: 3px;
 	}
 	code,
 	pre,
 	kbd {
 		font-family: var(--font-mono);
-		font-size: 0.9em;
+		font-size: 0.875em;
 	}
 	:not(pre) > code {
 		background: var(--sl-color-bg-inline-code);
-		/* Body text colour even inside muted paragraphs (.land-lead): gray-3 on the code
-		   background is 3.98:1 in dark mode, below the 4.5:1 Lighthouse asks for. */
+		/* Body text colour even inside muted paragraphs (.land-lead), for 4.5:1 contrast. */
 		color: var(--sl-color-text);
 		padding: 0.1em 0.35em;
-		border-radius: 0.3rem;
 		overflow-wrap: anywhere;
 	}
 	pre {
 		margin: 0;
 		overflow-x: auto;
 		-webkit-overflow-scrolling: touch;
+	}
+	::selection {
+		background: var(--color-accent-400);
+		color: #000;
 	}
 	:focus-visible {
 		outline: 2px solid var(--sl-color-accent);
@@ -111,22 +122,33 @@
 @layer components {
 	.land-wrap {
 		width: 100%;
-		max-width: 64rem;
+		max-width: 68rem;
 		margin-inline: auto;
 		padding-inline: 1rem;
 	}
 	.land-section {
-		padding-block: 3rem;
-		border-top: 1px solid var(--sl-color-hairline);
+		padding-block: 3.5rem;
+		border-top: 1px solid var(--land-line);
+	}
+	/* `// 02 THE PROBLEM`: the small mono label above each section heading. */
+	.land-kicker {
+		display: block;
+		margin-bottom: 0.75rem;
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--sl-color-text-accent);
 	}
 	.land-section > .land-wrap > h2 {
-		font-size: 1.5rem;
-		margin-bottom: 0.5rem;
+		font-size: clamp(1.5rem, 1.1rem + 1.6vw, 2.25rem);
+		margin-bottom: 0.75rem;
+		max-width: 28ch;
 	}
 	.land-lead {
 		max-width: 44rem;
 		color: var(--land-muted);
-		margin-bottom: 1.5rem;
+		margin-bottom: 2rem;
 	}
 	.land-prose {
 		max-width: 44rem;
@@ -134,20 +156,9 @@
 	.land-prose > * + * {
 		margin-top: 1rem;
 	}
-	.land-prose ul {
-		padding-left: 1.25rem;
-	}
-	.land-prose li + li {
-		margin-top: 0.5rem;
-	}
-	.land-prose li strong {
-		color: var(--sl-color-white);
-		font-weight: 600;
-	}
 	.land-code {
-		border: 1px solid var(--sl-color-hairline-light);
-		border-radius: 0.5rem;
-		background: var(--sl-color-bg-nav);
+		border: 1px solid var(--land-line);
+		background: var(--land-panel);
 		padding: 0.85rem 1rem;
 		font-size: 0.875rem;
 		line-height: 1.6;
@@ -156,13 +167,14 @@
 	.land-btn {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.4rem;
-		padding: 0.6rem 1.1rem;
-		border-radius: 0.5rem;
+		gap: 0.5rem;
+		padding: 0.7rem 1.2rem;
 		border: 1px solid transparent;
+		font-family: var(--font-mono);
 		font-weight: 600;
-		font-size: 0.95rem;
+		font-size: 0.9rem;
 		line-height: 1.2;
+		text-transform: lowercase;
 		cursor: pointer;
 		text-decoration: none;
 	}
@@ -177,23 +189,20 @@
 		background: var(--land-btn-bg-hover);
 	}
 	.land-btn-secondary {
-		border-color: var(--sl-color-gray-5);
+		border-color: var(--land-line);
 		color: var(--sl-color-white);
 		background: transparent;
 	}
 	.land-btn-secondary:hover {
-		border-color: var(--sl-color-gray-3);
-		background: var(--sl-color-bg-nav);
+		border-color: var(--sl-color-text-accent);
+		color: var(--sl-color-text-accent);
 	}
 	@media (min-width: 50em) {
 		.land-wrap {
 			padding-inline: 1.5rem;
 		}
 		.land-section {
-			padding-block: 4rem;
-		}
-		.land-section > .land-wrap > h2 {
-			font-size: 1.75rem;
+			padding-block: 5rem;
 		}
 	}
 }

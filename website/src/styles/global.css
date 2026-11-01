@@ -9,45 +9,79 @@
  */
 @layer base, starlight, theme, components, utilities;
 
+@import '@fontsource-variable/jetbrains-mono/wght.css';
 @import '@astrojs/starlight-tailwind';
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
 
 @theme {
-	/* System font stack for text, ui-monospace first for code. */
+	/* System font stack for body text; JetBrains Mono (self-hosted) for headings, labels and code. */
 	--font-sans:
 		ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
 		sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 	--font-mono:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
-		monospace;
+		'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+		'Liberation Mono', 'Courier New', monospace;
 
-	/* One accent hue: teal. Used by Tailwind utilities (bg-accent-600, …) and by Starlight. */
-	--color-accent-50: var(--color-teal-50);
-	--color-accent-100: var(--color-teal-100);
-	--color-accent-200: var(--color-teal-200);
-	--color-accent-300: var(--color-teal-300);
-	--color-accent-400: var(--color-teal-400);
-	--color-accent-500: var(--color-teal-500);
-	--color-accent-600: var(--color-teal-600);
-	--color-accent-700: var(--color-teal-700);
-	--color-accent-800: var(--color-teal-800);
-	--color-accent-900: var(--color-teal-900);
-	--color-accent-950: var(--color-teal-950);
+	/* One accent hue: terminal green. 400 is the neon; text uses 300 (dark) or 700 (light). */
+	--color-accent-50: #f0ffe9;
+	--color-accent-100: #dcffcf;
+	--color-accent-200: #b6ff9e;
+	--color-accent-300: #7dff5a;
+	--color-accent-400: #39ff14;
+	--color-accent-500: #22d10a;
+	--color-accent-600: #18a307;
+	--color-accent-700: #11700a;
+	--color-accent-800: #0e5a0b;
+	--color-accent-900: #0c4a0d;
+	--color-accent-950: #031f04;
+
+	/* Neutral grays (no blue tint), so black reads as black. */
+	--color-gray-50: var(--color-neutral-50);
+	--color-gray-100: var(--color-neutral-100);
+	--color-gray-200: var(--color-neutral-200);
+	--color-gray-300: var(--color-neutral-300);
+	--color-gray-400: var(--color-neutral-400);
+	--color-gray-500: var(--color-neutral-500);
+	--color-gray-600: var(--color-neutral-600);
+	--color-gray-700: var(--color-neutral-700);
+	--color-gray-800: var(--color-neutral-800);
+	--color-gray-900: var(--color-neutral-900);
+	--color-gray-950: var(--color-neutral-950);
 }
 
 /*
- * Starlight reads these three variables for links, the active sidebar item, buttons and
- * focus rings. Dark is the default theme; light overrides it.
+ * Starlight reads these variables for links, the active sidebar item, buttons, focus rings and
+ * backgrounds. Dark is the default theme (near-black); light overrides it.
  */
 :root {
 	--sl-color-accent-low: var(--color-accent-950);
-	--sl-color-accent: var(--color-accent-600);
-	--sl-color-accent-high: var(--color-accent-200);
+	--sl-color-accent: var(--color-accent-500);
+	--sl-color-accent-high: var(--color-accent-300);
+	--sl-color-black: #050505;
+	--sl-color-gray-6: #121212;
+	--sl-color-gray-5: #262626;
+	/* The faint grid behind the landing hero and Starlight's page. */
+	--grid-line: rgb(255 255 255 / 0.045);
 }
 
 :root[data-theme='light'] {
 	--sl-color-accent-low: var(--color-accent-100);
 	--sl-color-accent: var(--color-accent-700);
 	--sl-color-accent-high: var(--color-accent-900);
+	--sl-color-black: #fff;
+	--sl-color-gray-6: #f5f5f5;
+	--sl-color-gray-5: #e5e5e5;
+	--grid-line: rgb(0 0 0 / 0.05);
+}
+
+/* Docs pages: same mono headings and square corners as the landing page. */
+.sl-markdown-content :is(h1, h2, h3, h4),
+h1#_top,
+.site-title {
+	font-family: var(--font-mono);
+	letter-spacing: -0.02em;
+}
+.sl-markdown-content :is(pre, code, .expressive-code figure) {
+	border-radius: 0;
 }

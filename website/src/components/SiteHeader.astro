@@ -17,7 +17,7 @@ const links = [
 	<div class="land-wrap bar">
 		<a class="wordmark" href="/" aria-label="Daypass home">
 			<img src="/favicon.svg" width="22" height="22" alt="" />
-			<span>daypass</span>
+			<span>daypass</span><span class="blk" aria-hidden="true">_</span>
 		</a>
 		<nav aria-label="Site">
 			<ul>
@@ -30,8 +30,12 @@ const links = [
 
 <style>
 	.site-header {
-		border-bottom: 1px solid var(--sl-color-hairline);
-		background: var(--sl-color-bg);
+		position: sticky;
+		top: 0;
+		z-index: 10;
+		border-bottom: 1px solid var(--land-line);
+		background: color-mix(in srgb, var(--sl-color-bg) 85%, transparent);
+		backdrop-filter: blur(8px);
 	}
 	.bar {
 		display: flex;
@@ -46,13 +50,18 @@ const links = [
 		align-items: center;
 		gap: 0.5rem;
 		font-family: var(--font-mono);
-		font-weight: 600;
+		font-weight: 700;
 		font-size: 1.05rem;
+		letter-spacing: -0.02em;
 		color: var(--sl-color-white);
 		margin-right: auto;
 	}
 	.wordmark img {
-		border-radius: 5px;
+		border-radius: 0;
+	}
+	.blk {
+		margin-left: -0.4rem;
+		color: var(--sl-color-text-accent);
 	}
 	.wordmark:hover {
 		text-decoration: none;
@@ -68,13 +77,16 @@ const links = [
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.25rem 1rem;
-		font-size: 0.875rem;
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		text-transform: lowercase;
 	}
 	nav a {
 		color: var(--sl-color-gray-2);
 	}
 	nav a:hover {
-		color: var(--sl-color-white);
+		color: var(--sl-color-text-accent);
+		text-decoration: none;
 	}
 	@media (min-width: 50em) {
 		nav {
@@ -83,7 +95,7 @@ const links = [
 		}
 		nav ul {
 			gap: 1.25rem;
-			font-size: 0.9rem;
+			font-size: 0.825rem;
 		}
 	}
 </style>

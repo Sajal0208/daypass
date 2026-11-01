@@ -32,27 +32,27 @@ const claim =
 		</defs>
 
 		{/* daypass open */}
-		<rect x="330" y="14" width="220" height="58" rx="6" class="node" />
+		<rect x="330" y="14" width="220" height="58" rx="0" class="node" />
 		<text x="440" y="38" text-anchor="middle" class="title mono">daypass open</text>
 		<text x="440" y="58" text-anchor="middle" class="sub">you, in a terminal</text>
 
 		{/* Claude Code */}
-		<rect x="10" y="140" width="160" height="68" rx="6" class="node" />
+		<rect x="10" y="140" width="160" height="68" rx="0" class="node" />
 		<text x="90" y="168" text-anchor="middle" class="title">Claude Code</text>
 		<text x="90" y="190" text-anchor="middle" class="sub">or any MCP client</text>
 
 		{/* Daypass MCP server (the gate; the one accent-coloured element) */}
-		<rect x="310" y="136" width="260" height="76" rx="6" class="node gate" />
+		<rect x="310" y="136" width="260" height="76" rx="0" class="node gate" />
 		<text x="440" y="162" text-anchor="middle" class="title">Daypass MCP server</text>
 		<text x="440" y="185" text-anchor="middle" class="sub mono">SELECT-only parser (libpg-query)</text>
 
 		{/* Postgres role */}
-		<rect x="710" y="140" width="160" height="68" rx="6" class="node" />
+		<rect x="710" y="140" width="160" height="68" rx="0" class="node" />
 		<text x="790" y="168" text-anchor="middle" class="title">Postgres role</text>
 		<text x="790" y="190" text-anchor="middle" class="sub mono">daypass_ro</text>
 
 		{/* audit.jsonl */}
-		<rect x="330" y="272" width="220" height="48" rx="6" class="node" />
+		<rect x="330" y="272" width="220" height="48" rx="0" class="node" />
 		<text x="440" y="301" text-anchor="middle" class="title mono">~/.daypass/audit.jsonl</text>
 
 		{/* lease file -> server */}
@@ -92,11 +92,11 @@ const claim =
 			</marker>
 		</defs>
 
-		<rect x="10" y="10" width="165" height="58" rx="6" class="node" />
+		<rect x="10" y="10" width="165" height="58" rx="0" class="node" />
 		<text x="92" y="34" text-anchor="middle" class="title mono">daypass open</text>
 		<text x="92" y="54" text-anchor="middle" class="sub">you, in a terminal</text>
 
-		<rect x="185" y="10" width="165" height="58" rx="6" class="node" />
+		<rect x="185" y="10" width="165" height="58" rx="0" class="node" />
 		<text x="267" y="34" text-anchor="middle" class="title">Claude Code</text>
 		<text x="267" y="54" text-anchor="middle" class="sub">or any MCP client</text>
 
@@ -105,7 +105,7 @@ const claim =
 		<line x1="267" y1="68" x2="267" y2="130" class="edge" marker-end="url(#fn-arrow)" />
 		<text x="275" y="104" class="label">query(sql)</text>
 
-		<rect x="60" y="132" width="290" height="72" rx="6" class="node gate" />
+		<rect x="60" y="132" width="290" height="72" rx="0" class="node gate" />
 		<text x="205" y="158" text-anchor="middle" class="title">Daypass MCP server</text>
 		<text x="205" y="182" text-anchor="middle" class="sub mono">SELECT-only parser (libpg-query)</text>
 
@@ -115,14 +115,14 @@ const claim =
 		<text x="205" y="246" text-anchor="middle" class="label">↑ visible columns only,</text>
 		<text x="205" y="262" text-anchor="middle" class="label">read-only txn, 10 s</text>
 
-		<rect x="60" y="272" width="290" height="58" rx="6" class="node" />
+		<rect x="60" y="272" width="290" height="58" rx="0" class="node" />
 		<text x="205" y="296" text-anchor="middle" class="title">Postgres role</text>
 		<text x="205" y="316" text-anchor="middle" class="sub mono">daypass_ro</text>
 
 		{/* server -> audit, routed down the left gutter past the role */}
 		<path d="M60 168 H30 V388 H56" fill="none" class="edge" marker-end="url(#fn-arrow)" />
 		<text x="60" y="354" class="label">start + end line per call</text>
-		<rect x="60" y="364" width="290" height="48" rx="6" class="node" />
+		<rect x="60" y="364" width="290" height="48" rx="0" class="node" />
 		<text x="205" y="393" text-anchor="middle" class="title mono">~/.daypass/audit.jsonl</text>
 	</svg>
 
@@ -158,13 +158,13 @@ const claim =
 		}
 	}
 	.node {
-		fill: var(--sl-color-bg-nav);
+		fill: var(--land-panel);
 		stroke: currentColor;
 		stroke-opacity: 0.35;
 		stroke-width: 1;
 	}
 	.gate {
-		stroke: var(--sl-color-accent);
+		stroke: var(--sl-color-text-accent);
 		stroke-opacity: 1;
 		stroke-width: 2;
 	}
