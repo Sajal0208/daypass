@@ -1,6 +1,6 @@
 {
   "name": "daypass",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Temporary, read-only, audited database access for AI coding agents. A human opens a lease; Claude Code (or any MCP client) gets SELECT-only tools until it expires.",
   "keywords": [
     "mcp",
