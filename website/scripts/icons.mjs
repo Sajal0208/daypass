@@ -5,7 +5,7 @@
  *   public/favicon.ico           32×32 (a PNG wrapped in an ICO container; every current
  *                                browser reads PNG-in-ICO, and it is what /favicon.ico
  *                                requests from old clients and link previews expect)
- *   public/apple-touch-icon.png  180×180, flattened on the accent colour (iOS ignores
+ *   public/apple-touch-icon.png  180×180, flattened on the icon background (iOS ignores
  *                                transparency and rounds the corners itself)
  *
  * Run with `npm run icons` after changing favicon.svg. The outputs are committed.
@@ -18,8 +18,8 @@ import sharp from 'sharp';
 const publicDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const svg = await readFile(path.join(publicDir, 'favicon.svg'));
 
-/** Same as the `<rect fill>` in favicon.svg: fills the rounded corners of the touch icon. */
-const ACCENT = '#0f766e';
+/** Same as the `<rect fill>` in favicon.svg: fills the touch icon behind any transparency. */
+const ACCENT = '#050505';
 
 /** Wrap one PNG in an ICO container (ICONDIR + one ICONDIRENTRY + the PNG bytes). */
 function pngToIco(png, size) {

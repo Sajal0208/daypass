@@ -6,7 +6,7 @@ const { command } = Astro.props;
 ---
 
 <div class="install">
-	<pre class="land-code"><code>{command}</code></pre>
+	<pre class="land-code"><code><span class="ps" aria-hidden="true">$ </span>{command}</code></pre>
 	<button type="button" class="copy" data-copy={command} aria-label={`Copy "${command}"`}>Copy</button>
 </div>
 
@@ -14,8 +14,11 @@ const { command } = Astro.props;
 	.install {
 		display: flex;
 		align-items: stretch;
-		gap: 0.5rem;
 		max-width: 28rem;
+	}
+	.ps {
+		color: var(--sl-color-text-accent);
+		user-select: none;
 	}
 	.install pre {
 		flex: 1;
@@ -26,15 +29,18 @@ const { command } = Astro.props;
 	.copy {
 		flex: none;
 		padding: 0 0.85rem;
-		border-radius: 0.5rem;
-		border: 1px solid var(--sl-color-gray-5);
-		background: transparent;
+		border-radius: 0;
+		border: 1px solid var(--land-line);
+		border-left: 0;
+		background: var(--land-panel);
 		color: var(--sl-color-white);
-		font-size: 0.85rem;
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		text-transform: lowercase;
 		cursor: pointer;
 	}
 	.copy:hover {
-		background: var(--sl-color-bg-nav);
+		color: var(--sl-color-text-accent);
 	}
 </style>
 

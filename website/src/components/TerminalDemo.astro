@@ -12,6 +12,7 @@ const alt =
 
 <div class="demo" data-mode="gif">
 	<div class="toolbar">
+		<span class="title" aria-hidden="true"><i></i><i></i><i></i> ~/daypass — zsh</span>
 		<button type="button" class="toggle" data-demo-toggle aria-pressed="false">Show as text</button>
 	</div>
 	<div class="gif">
@@ -26,16 +27,37 @@ const alt =
 	}
 	.toolbar {
 		display: flex;
-		justify-content: flex-end;
-		margin-bottom: 0.5rem;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--land-line);
+		border-bottom: 0;
+		background: var(--land-panel);
+	}
+	.title {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--land-muted);
+	}
+	.title i {
+		width: 0.65rem;
+		height: 0.65rem;
+		border-radius: 50%;
+		background: var(--land-line);
 	}
 	.toggle {
 		padding: 0.35rem 0.75rem;
-		border-radius: 0.4rem;
-		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0;
+		border: 1px solid var(--land-line);
 		background: transparent;
 		color: var(--sl-color-white);
-		font-size: 0.85rem;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		text-transform: lowercase;
 		cursor: pointer;
 	}
 	.toggle:hover {
@@ -45,9 +67,9 @@ const alt =
 		display: block;
 		width: 100%;
 		height: auto;
-		border: 1px solid var(--sl-color-hairline-light);
-		border-radius: 0.5rem;
-		background: var(--sl-color-bg-nav);
+		border: 1px solid var(--land-line);
+		border-radius: 0;
+		background: var(--land-panel);
 	}
 	.text {
 		font-size: 0.8rem;

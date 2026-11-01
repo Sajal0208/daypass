@@ -4,47 +4,91 @@ import InstallSnippet from '../components/InstallSnippet.astro';
 import FlowDiagram from '../components/FlowDiagram.astro';
 import LayerTable from '../components/LayerTable.astro';
 import TerminalDemo from '../components/TerminalDemo.astro';
-import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
+import { installCommand, repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
+
+const stats = ['SELECT-only', 'expires on its own', 'no password in context', 'every query logged'];
+
+/** The cost of handing an agent the DB URL. Same claims as README.md "Why not just give the agent the DB URL?". */
+const problems = [
+	['password', 'It lands in .mcp.json, the chat transcript and client logs. Rotating it means finding every copy.'],
+	['expiry', 'None. Access granted for one debugging session is still there next month.'],
+	['writes', 'UPDATE, DELETE, DROP. One wrong tool call, or one row of injected text that reads like an instruction, is enough.'],
+	['pii', 'SELECT * FROM users ships every email, phone and token to the model provider and into the transcript.'],
+	['audit', 'None. Nobody can say afterwards what was read, by whom, or why.'],
+];
+
+/** The four parts that replace the URL. Each fact is in README.md "Why it is safe". */
+const steps = [
+	{ n: '01', name: 'Lease', cmd: 'daypass open prod --ttl 45m', text: 'A human opens it with a reason. When the time is up, the door shuts on its own.' },
+	{ n: '02', name: 'Role', cmd: 'daypass_ro', text: 'SELECT on visible columns only, no write privilege anywhere. Hidden PII columns fail inside Postgres.' },
+	{ n: '03', name: 'Parser', cmd: 'libpg-query', text: "Postgres's own parser. One SELECT or EXPLAIN, run in a read-only transaction with a 10 s timeout." },
+	{ n: '04', name: 'Log', cmd: '~/.daypass/audit.jsonl', text: 'A line before each query runs and one when it ends: who, why, SQL, rows, time.' },
+];
 ---
 
 <Landing title={siteTitle} description={siteDescription}>
 	<section class="hero">
 		<div class="land-wrap">
-			<h1>Temporary, read-only, audited database access for AI coding agents.</h1>
+			<p class="prompt" aria-hidden="true">$ daypass open prod --ttl 45m --reason "why are campaign 1234's calls failing"</p>
+			<h1>
+				<span class="line"><span class="caret" aria-hidden="true">&gt;</span> Your agent gets a day pass.</span>
+				<span class="line accent"><span class="caret" aria-hidden="true">&gt;</span> Not the keys to prod.<span class="cursor" aria-hidden="true"></span></span>
+			</h1>
 			<p class="tagline">
-				The tools never hand the agent a password, every statement runs read-only as a role with no
-				write privilege, and every query is logged with who, why, what, how many rows and how long.
+				Temporary, read-only, audited Postgres access for AI coding agents. Claude Code, or any MCP
+				client, gets <code>SELECT</code>-only tools until the lease runs out.
 			</p>
 			<div class="actions">
-				<a class="land-btn land-btn-primary" href="/docs/quickstart/">Quickstart</a>
-				<a class="land-btn land-btn-secondary" href={repoUrl}>GitHub</a>
+				<InstallSnippet command={installCommand} />
+				<a class="land-btn land-btn-primary" href="/docs/quickstart/">quickstart →</a>
+				<a class="land-btn land-btn-secondary" href={repoUrl}>github</a>
 			</div>
-			<InstallSnippet command="npm install -g daypass" />
+			<ul class="stats" aria-label="At a glance">
+				{stats.map((s) => <li>{s}</li>)}
+			</ul>
 		</div>
 	</section>
 
-	<section class="land-section" aria-labelledby="how">
+	<section class="land-section" aria-labelledby="problem">
 		<div class="land-wrap">
-			<h2 id="how">How it works</h2>
+			<span class="land-kicker">// 01 the problem</span>
+			<h2 id="problem">Giving your agent the DB URL.</h2>
+			<dl class="problems">
+				{problems.map(([k, v]) => (
+					<div>
+						<dt>{k}</dt>
+						<dd>{v}</dd>
+					</div>
+				))}
+			</dl>
+		</div>
+	</section>
+
+	<section class="land-section" aria-labelledby="fix">
+		<div class="land-wrap">
+			<span class="land-kicker">// 02 the fix</span>
+			<h2 id="fix">A lease, a role, a parser and a log.</h2>
 			<p class="land-lead">
-				You open a lease: <code>daypass open prod --ttl 45m --reason "..."</code>. For that
-				time the agent can run <code>SELECT</code>s on your Postgres through five MCP tools.
-				Then the door shuts on its own.
+				Every query passes all four. The role is the wall; the rest are fences in front of it.
 			</p>
+			<ol class="steps">
+				{steps.map((s) => (
+					<li>
+						<span class="n">{s.n}</span>
+						<h3>{s.name}</h3>
+						<code class="cmd">{s.cmd}</code>
+						<p>{s.text}</p>
+					</li>
+				))}
+			</ol>
 			<FlowDiagram />
-		</div>
-	</section>
-
-	<section class="land-section" aria-labelledby="safe">
-		<div class="land-wrap">
-			<h2 id="safe">Why it is safe</h2>
-			<LayerTable />
 		</div>
 	</section>
 
 	<section class="land-section" aria-labelledby="demo">
 		<div class="land-wrap">
-			<h2 id="demo">In the terminal</h2>
+			<span class="land-kicker">// 03 live</span>
+			<h2 id="demo">In the terminal.</h2>
 			<p class="land-lead">
 				Open a lease, run <code>daypass doctor</code>, then three queries: one works, <code>SELECT *</code> on a table with hidden columns is refused by Postgres, and an <code>UPDATE</code> never reaches it. <code>daypass log</code> shows all three.
 			</p>
@@ -52,49 +96,27 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 		</div>
 	</section>
 
-	<section class="land-section" aria-labelledby="why-not">
+	<section class="land-section" aria-labelledby="safe">
 		<div class="land-wrap">
-			<h2 id="why-not">Why not just give the agent the DB URL?</h2>
-			<div class="land-prose">
-			<ul>
-				<li>
-					<strong>The password lands in context and config forever.</strong> It sits in <code>.mcp.json</code>, in the chat transcript, in whatever the client logs. Rotating
-					it later means finding every copy.
-				</li>
-				<li>
-					<strong>Nothing expires.</strong> Access granted for one debugging session is still
-					there next month.
-				</li>
-				<li>
-					<strong>Writes are possible.</strong> A URL to the application user can <code>UPDATE</code>, <code>DELETE</code> and <code>DROP</code>. One wrong tool call, or
-					one row of injected text that reads like an instruction, is enough.
-				</li>
-				<li>
-					<strong>PII flows into the model.</strong> <code>SELECT * FROM users</code> ships
-					every email, phone and token to the model provider, and into the transcript.
-				</li>
-				<li>
-					<strong>Nobody can say afterwards what was read.</strong> No log ties a query to a
-					person and a reason.
-				</li>
-			</ul>
-			<p>Daypass replaces the URL with a lease, a role, a parser and an audit line.</p>
-			</div>
+			<span class="land-kicker">// 04 defense in depth</span>
+			<h2 id="safe">Eight layers. Read them all.</h2>
+			<LayerTable />
 		</div>
 	</section>
 
 	<section class="land-section" aria-labelledby="plugin">
 		<div class="land-wrap">
-			<h2 id="plugin">Claude Code plugin</h2>
+			<span class="land-kicker">// 05 claude code</span>
+			<h2 id="plugin">Two commands. Done.</h2>
 			<div class="land-prose">
-			<p>
-				The plugin bundles the MCP server, so you skip <code>claude mcp add</code>. Two commands
-				inside Claude Code, and the tools are there the next time a lease is open. Any other MCP
-				client works too: the command is <code>daypass mcp</code> over stdio.
-			</p>
-			<pre class="land-code"><code>/plugin marketplace add Sajal0208/daypass
-/plugin install daypass@daypass</code></pre>
-			<p><a href="/docs/plugin/">What the plugin adds on top of the bare MCP server</a></p>
+				<p>
+					The plugin bundles the MCP server, so you skip <code>claude mcp add</code>. The tools show up
+					the next time a lease is open. Any other MCP client works too: <code>daypass mcp</code> over
+					stdio.
+				</p>
+				<pre class="land-code"><code><span class="ps">&gt; </span>/plugin marketplace add Sajal0208/daypass
+<span class="ps">&gt; </span>/plugin install daypass@daypass</code></pre>
+				<p><a href="/docs/plugin/">What the plugin adds on top of the bare MCP server →</a></p>
 			</div>
 		</div>
 	</section>
@@ -102,14 +124,60 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 
 <style>
 	.hero {
+		position: relative;
 		padding-block: 3.5rem 3rem;
+		/* Faint grid that fades out towards the bottom. */
+		background-image:
+			linear-gradient(var(--grid-line) 1px, transparent 1px),
+			linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+		background-size: 48px 48px;
+		background-position: -1px -1px;
+		mask-image: linear-gradient(to bottom, #000 70%, transparent);
+	}
+	.prompt {
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		color: var(--land-muted);
+		margin-bottom: 1.5rem;
+		overflow-wrap: anywhere;
 	}
 	.hero h1 {
-		font-size: clamp(1.9rem, 1.2rem + 3.2vw, 3rem);
-		max-width: 20ch;
+		font-size: clamp(2rem, 1rem + 4.4vw, 4rem);
+		text-transform: uppercase;
+		letter-spacing: -0.04em;
+		line-height: 1.05;
+	}
+	.line {
+		display: block;
+	}
+	.caret {
+		color: var(--sl-color-text-accent);
+		margin-right: 0.15em;
+	}
+	.accent {
+		color: var(--sl-color-text-accent);
+	}
+	.cursor {
+		display: inline-block;
+		width: 0.55em;
+		height: 0.85em;
+		margin-left: 0.12em;
+		vertical-align: -0.05em;
+		background: currentColor;
+		animation: blink 1.1s steps(1) infinite;
+	}
+	@keyframes blink {
+		50% {
+			opacity: 0;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.cursor {
+			animation: none;
+		}
 	}
 	.tagline {
-		margin-top: 1.25rem;
+		margin-top: 1.5rem;
 		max-width: 40rem;
 		font-size: 1.1rem;
 		color: var(--land-muted);
@@ -117,12 +185,145 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
+		align-items: stretch;
 		gap: 0.75rem;
-		margin-block: 1.75rem 1.25rem;
+		margin-top: 2rem;
+	}
+	.stats {
+		list-style: none;
+		margin: 2.5rem 0 0;
+		padding: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem 1.5rem;
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--land-muted);
+	}
+	.stats li::before {
+		content: '■ ';
+		color: var(--sl-color-text-accent);
+	}
+
+	.problems {
+		margin: 2rem 0 0;
+		border-top: 1px solid var(--land-line);
+	}
+	.problems > div {
+		display: grid;
+		grid-template-columns: 7.5rem 1fr;
+		gap: 0.25rem 1.5rem;
+		padding-block: 1rem;
+		border-bottom: 1px solid var(--land-line);
+	}
+	.problems dt {
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: #ff5f56;
+		padding-top: 0.15rem;
+	}
+	.problems dt::before {
+		content: '✕ ';
+	}
+	:global([data-theme='light']) .problems dt {
+		color: #b42318;
+	}
+	.problems dd {
+		margin: 0;
+		max-width: 44rem;
+	}
+	@media (max-width: 30em) {
+		.problems > div {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.steps {
+		list-style: none;
+		margin: 0 0 3rem;
+		padding: 0;
+		display: grid;
+		grid-template-columns: 1fr;
+		border: 1px solid var(--land-line);
+	}
+	.steps li {
+		position: relative;
+		padding: 1.5rem 1.25rem;
+		background: var(--land-panel);
+	}
+	.steps li + li {
+		border-top: 1px solid var(--land-line);
+	}
+	.steps .n {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--sl-color-text-accent);
+		letter-spacing: 0.1em;
+	}
+	.steps h3 {
+		margin-top: 0.5rem;
+		font-size: 1.25rem;
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
+	}
+	.steps .cmd {
+		display: inline-block;
+		margin-top: 0.6rem;
+		font-size: 0.75rem;
+	}
+	.steps p {
+		margin-top: 0.75rem;
+		font-size: 0.925rem;
+		color: var(--land-muted);
+	}
+	@media (min-width: 40em) {
+		.steps {
+			grid-template-columns: repeat(2, 1fr);
+		}
+		.steps li + li {
+			border-top: 0;
+		}
+		.steps li:nth-child(n + 3) {
+			border-top: 1px solid var(--land-line);
+		}
+		.steps li:nth-child(even) {
+			border-left: 1px solid var(--land-line);
+		}
+	}
+	@media (min-width: 64em) {
+		.steps {
+			grid-template-columns: repeat(4, 1fr);
+		}
+		.steps li:nth-child(n + 3) {
+			border-top: 0;
+		}
+		.steps li + li {
+			border-left: 1px solid var(--land-line);
+		}
+		/* The arrow between steps. */
+		.steps li + li::before {
+			content: '→';
+			position: absolute;
+			left: -0.6rem;
+			top: 1.35rem;
+			padding: 0 0.15rem;
+			font-family: var(--font-mono);
+			color: var(--sl-color-text-accent);
+			background: var(--sl-color-bg);
+		}
+	}
+
+	.ps {
+		color: var(--sl-color-text-accent);
+		user-select: none;
 	}
 	@media (min-width: 50em) {
 		.hero {
-			padding-block: 5.5rem 4.5rem;
+			padding-block: 6rem 5rem;
 		}
 	}
 </style>
