@@ -35,6 +35,18 @@ Security fixes from the 2026-10-30 review. **Everyone on 0.1.0: upgrade, then re
 
 - The release workflow is split into build and publish jobs, SHA-pinned, and set up for npm trusted publishing behind a reviewed environment. That maintainer setup is still pending (see CONTRIBUTING.md).
 
+## [0.1.1](https://github.com/Sajal0208/daypass/compare/v0.1.0...v0.1.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* address the 2026-10-30 full security review ([#19](https://github.com/Sajal0208/daypass/issues/19)) ([a07b773](https://github.com/Sajal0208/daypass/commit/a07b7733f20d49b00b434e9694935a6af58a25e4))
+
+
+### Documentation
+
+* document the staged npm publishing flow ([#18](https://github.com/Sajal0208/daypass/issues/18)) ([5ccf9e1](https://github.com/Sajal0208/daypass/commit/5ccf9e17502618a21a6e01828eaaa80377a5b82c))
+
 ## 0.1.0 — 2026-10-28
 
 First release.
