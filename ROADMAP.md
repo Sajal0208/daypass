@@ -11,28 +11,33 @@ Status words: **idea** (we would take a PR), **planned** (on a milestone, not st
 
 What ships today, so the rest of this page has a baseline.
 
-- CLI: `daypass init | sql | open | status | close | sweep | log | doctor | mcp`.
+- CLI: `daypass init | sql | hidden | open | status | close | sweep | log | doctor | mcp`.
 - Five MCP tools: `daypass_status`, `list_tables`, `describe_table`, `explain`, `query`.
 - Postgres only. Auth is an AWS RDS IAM token minted from your own AWS identity, or a
   connection URL / password for any other Postgres.
 - The guard: Postgres's own parser, one statement, `SELECT` or `EXPLAIN` only, a block list of
-  dangerous functions, no row locks, no `SELECT INTO`, no `EXPLAIN ANALYZE`.
-- Caps: 500 rows, 2 KB per cell, 1 MB per result, 10 s statement timeout, read-only session.
-- Audit: one JSON line per call in `~/.daypass/audit.jsonl`.
-- Optional per-lease security-group rule for your current IP, removed on close or expiry.
-- A Claude Code plugin that registers the MCP server and ships the usage skill.
+  dangerous functions, no data-modifying CTEs, no row locks, no `SELECT INTO`, no
+  `EXPLAIN ANALYZE`.
+- Caps: 500 rows and 1 MB per result (cut in the database), 2000 characters per cell, 10 s
+  statement timeout, read-only transaction per call.
+- Audit: a start and an end line per call in `~/.daypass/audit.jsonl`.
+- Optional per-lease security-group rule for your current IP, removed on close, on the first
+  tool call after expiry, or by `daypass sweep`.
+- A Claude Code plugin that registers the MCP server and ships the usage skill and a PII hook.
 
 ## Next (0.2)
 
 Milestone: [v0.2](https://github.com/Sajal0208/daypass/milestone/1).
 
-- **`hidden suggest` improvements.** Emit schema-qualified names, so a column list from a
-  database with more than one schema is unambiguous and applies cleanly. *Status: planned.*
+- **`hidden suggest` improvements.** Emit schema-qualified (and quoted) names, so a column list
+  from a database with more than one schema is unambiguous and applies cleanly. *Status: in
+  progress (merged, in the next release; see the changelog's Unreleased section).*
 - **MySQL / MariaDB target type.** The same lease, guard and audit over a second engine, with
   a parser-backed guard rather than a regex. *Status: idea.*
-- **Read-replica target option.** Point a target at a replica while the lease, audit and
-  hidden-column role stay exactly as they are; the replica is extra distance, not a
-  replacement for the wall. *Status: idea.*
+- **Read-replica timeout setting.** Pointing a target at a replica already works today; it is
+  a host in the config. Raising the 10 s statement timeout for a replica still means editing
+  two places (`sql/setup-role.sql` and `STATEMENT_TIMEOUT_MS`); one setting for that is the
+  open item. *Status: idea.*
 - **Audit to a Postgres table.** Write each audit line to a table in a database of your
   choosing as well as the local file, so a team can query who looked at what. *Status:
   planned.*

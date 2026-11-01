@@ -5,5 +5,6 @@
   "author": { "name": "Vocobase", "email": "developers@vocobase.com" },
   "homepage": "https://github.com/Sajal0208/daypass",
   "license": "MIT",
+  "icon": ".claude-plugin/icon.png",
   "keywords": ["postgres", "mcp", "read-only", "audit", "database"]
 }

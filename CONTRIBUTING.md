@@ -7,7 +7,7 @@ Thanks for helping. Daypass is small on purpose; please keep it that way.
 ```bash
 git clone https://github.com/Sajal0208/daypass && cd daypass
 npm install
-npm run build && npm test          # unit tests, no database needed
+npm test                           # unit tests, no database needed; rebuilds dist/ first when it is stale
 npm link                           # `daypass` on your PATH, pointing at dist/
 ```
 
@@ -15,6 +15,7 @@ End-to-end against a real Postgres (Docker is easiest):
 
 ```bash
 docker run --rm -d --name pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16
+npm run build                      # ci-integration.sh runs dist/cli/main.js and does not build it
 OWNER_URL=postgres://postgres:postgres@localhost:5432/postgres scripts/ci-integration.sh
 ```
 
@@ -33,48 +34,94 @@ OWNER_URL=postgres://postgres:postgres@localhost:5432/postgres scripts/ci-integr
   The type decides the version bump and the changelog section, so pick it honestly. Add a
   `CHANGELOG.md` line under *Unreleased* when the change is worth a sentence a user would
   read; it is folded into the release notes at release time (below).
+- **Merges are squash-only.** Every change arrives through a pull request, CI
+  (`build + unit tests (node 20)`, `build + unit tests (node 22)`,
+  `role SQL + doctor + MCP against real Postgres`, `no private identifiers`) must be green, and
+  the PR is squash-merged. The PR title becomes the commit message on `main`, so it has to be a
+  valid conventional-commit line. (A ruleset that enforces this is still pending, see
+  *Maintainer setup (pending)* below; until then it is a rule we follow, not one GitHub enforces.)
+- **No private identifiers, anywhere in history.** `scripts/scrub-check.sh` runs in CI on the
+  working tree, the index and the PR's commits. With `SCRUB_HISTORY=1` it scans every commit
+  reachable from *any* ref (local branches, remote-tracking branches, tags and the latest stash
+  entry; older stash entries are not scanned) plus annotated tag messages, and names the ref
+  each hit came from. Before pushing a new
+  branch, run `SCRUB_HISTORY=1 scripts/scrub-check.sh` and make sure no hit comes from a commit
+  you are about to push. Hits from refs you are not pushing (an old local backup branch, a stale
+  remote-tracking branch) do not block your push, but delete those refs when you can: the full
+  scan only passes once every ref on your machine is clean, and on a maintainer's clone it does
+  not pass yet (see *Maintainer setup (pending)*).
 
 ## Releasing (maintainers)
 
 Releases are cut by [release-please](https://github.com/googleapis/release-please). Nobody runs
-`npm version` or pushes a tag by hand (except once, for `v0.1.0`, see below).
+`npm version`, `npm publish` or pushes a tag by hand (`v0.1.0` was the one exception).
 
 1. Merge PRs to `main` with conventional-commit titles (PRs are squash-merged, so the PR title
    is the commit message that counts).
-2. release-please keeps a `chore(main): release x.y.z` PR open. It bumps `package.json`,
-   `.release-please-manifest.json` and writes a `## [x.y.z](compare-url) (date)` section in
-   `CHANGELOG.md` from the commits since the last tag.
+2. release-please (`.github/workflows/release-please.yml`) keeps a `chore(main): release x.y.z`
+   PR open. It bumps `package.json`, `.release-please-manifest.json` and writes a
+   `## [x.y.z](compare-url) (date)` section in `CHANGELOG.md` from the commits since the last tag.
 3. Keep the *Unreleased* bullets short. While the release PR is open, move any *Unreleased*
    bullets into the generated section by committing to `main`; release-please regenerates the
    PR on every push to `main` and force-pushes it, so do not hand-edit the PR branch.
    release-please inserts its section directly under `# Changelog`, so after each release
    move the empty `## Unreleased` heading back to the top.
-4. Merge the release PR. release-please creates the `vx.y.z` tag and the GitHub release, then
-   dispatches `.github/workflows/release.yml` on the tag, which runs build + tests, checks the
-   tag matches `package.json`, publishes to npm with provenance, and fills in the release
-   notes. The release PR itself does not trigger CI (it is opened with the default token), so
-   merge it only when `main` is green.
+4. Get CI green on the release PR. It is opened with the workflow token, which does not trigger
+   `pull_request` workflows, so the required checks never appear by themselves: close the PR and
+   reopen it (the reopen counts as your event and runs CI), then squash-merge it.
+5. Merging creates the `vx.y.z` tag and the GitHub release and dispatches
+   `.github/workflows/release.yml` on the tag. Its `build` job (read-only token, no publish
+   credential) checks that the tag matches `package.json`, builds, runs the tests, packs the
+   tarball, installs it into an empty directory and runs `daypass --version` and
+   `daypass sql --role daypass_smoke_role` from it (what users will install is tested, not the
+   checkout), then uploads the tarball with its sha256.
+6. Approve the publish. The `publish` job runs in the `npm-publish` GitHub environment, which
+   (once set up, see below) has a required reviewer and only admits `v*` tags, so the run waits
+   under *Actions* until a maintainer approves it. It runs no repository or dependency code: it
+   downloads the tarball, checks the sha256, and runs
+   `npm publish <tarball> --provenance --access public` using **npm trusted publishing** (OIDC):
+   npm trusts this repository's `release.yml` running in the `npm-publish` environment and
+   issues a short-lived credential for that run. The workflow uses no npm token. `npm stage` /
+   staged publishing is **not** used. A last `release-notes` job fills in the GitHub release
+   notes.
+
+If a publish has to be redone (a flaky test, an approval that timed out), re-run `release.yml`
+from the *Actions* tab with the tag as the ref; it refuses to run on anything that is not a tag
+matching `package.json`.
 
 Pre-1.0 semantics are on (`bump-minor-pre-major`, `bump-patch-for-minor-pre-major`): a `feat`
 bumps the minor, a `fix` the patch, and a `!` / `BREAKING CHANGE` bumps the minor, not the
 major.
 
-The release-please workflow is a no-op while the repository is private. The first public
-release, `v0.1.0`, is tagged by hand (`git tag v0.1.0 && git push --tags`); release-please
-finds that tag and takes over from the next merge.
+### Maintainer setup (pending)
 
-### npm publishing is staged
+**None of this is done yet.** Until it is, the release flow above is not protected the way it
+describes: GitHub creates the `npm-publish` environment on the first run *without* a reviewer or
+tag policy, and the publish step fails because npm does not trust the workflow yet. Do these in
+order, before the next release:
 
-The `NPM_TOKEN` secret is a stage-only granular token. `release.yml` runs `npm publish --provenance`,
-which with that token *stages* the version instead of publishing it. A maintainer then approves it
-with 2FA (npm 11.15+ on a supported Node):
+1. GitHub: create the environment `npm-publish` with a required reviewer and a deployment
+   policy that only admits tags matching `v*`.
+2. npmjs.com: package *Settings* > *Trusted Publisher* > GitHub Actions, with user `Sajal0208`,
+   repository `daypass`, workflow filename `release.yml`, environment `npm-publish`.
+3. GitHub: *Settings* > *Actions* > *General* > "Allow GitHub Actions to create and approve pull
+   requests" on (release-please opens the release PR with the workflow token).
+4. GitHub: *Settings* > *Security* > enable private vulnerability reporting (SECURITY.md sends
+   reporters there first).
+5. GitHub: a ruleset on `main` (pull request required, the four CI checks above required) and
+   repository merge settings with squash as the only merge method.
+6. Delete the `NPM_TOKEN` repository secret, revoke that token on npmjs.com, and set the
+   package's publishing access to "require two-factor authentication and disallow tokens".
 
-```bash
-npx -y npm@latest stage list daypass
-npx -y npm@latest stage approve <stage-id>
-```
+Clean-up for the full history scan (`SCRUB_HISTORY=1`): delete local backup branches made
+before the history was squashed, and delete the remaining `dependabot/*` branches on `origin`
+(their PRs are already closed; some were cut from the pre-squash history, and their
+`refs/pull/<n>/head` stay fetchable until GitHub Support removes them). Then
+`git fetch --prune origin` so stale remote-tracking refs stop being scanned.
 
-This is deliberate: a human with 2FA is the last step before anything reaches the registry.
+Already in place: every action in `.github/workflows/` is pinned to a commit SHA with a
+`# vX.Y.Z` comment, and Dependabot (`.github/dependabot.yml`, `github-actions` ecosystem)
+proposes pin updates.
 
 ## Code of conduct
 

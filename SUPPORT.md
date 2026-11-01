@@ -10,7 +10,7 @@ gets a quick answer.
 | A question (how do I, does it work with, is this expected) | [GitHub Discussions](https://github.com/Sajal0208/daypass/discussions) |
 | A bug (it does not do what the docs say) | [New issue](https://github.com/Sajal0208/daypass/issues/new/choose), using the *Bug* template |
 | An idea | [New issue](https://github.com/Sajal0208/daypass/issues/new/choose), using the *Feature request* template, or a Discussion |
-| Anything that weakens the wall (hidden column readable, a write goes through, a lease bypass, a leaked credential) | **Not an issue.** See [SECURITY.md](SECURITY.md) and email security@vocobase.com |
+| Anything that weakens the wall (hidden column readable, a write goes through, a lease bypass, a leaked credential) | **Not an issue.** Open a [private vulnerability report](https://github.com/Sajal0208/daypass/security/advisories/new) (if the form is not offered yet, email instead), or email security@vocobase.com; see [SECURITY.md](SECURITY.md) |
 
 ## What to include
 
@@ -32,7 +32,8 @@ Never paste a connection URL with a password, an IAM token, or a real security-g
 - Discussions and issues: best effort, usually within a few days. Smaller, reproducible
   reports get looked at first.
 - Security reports: a reply within 3 working days and a fix target of 14 days for anything
-  that weakens the read-only guarantee, as set out in [SECURITY.md](SECURITY.md).
+  that weakens the read-only guarantee, as set out in [SECURITY.md](SECURITY.md). Only the
+  latest 0.1.x release is supported.
 - Pull requests: see [CONTRIBUTING.md](CONTRIBUTING.md). A PR that touches the guard or the
   role SQL needs a line on how you proved the agent still cannot write or read hidden columns.
 

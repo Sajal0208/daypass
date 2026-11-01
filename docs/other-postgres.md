@@ -27,7 +27,7 @@ psql "$OWNER_URL" -c "ALTER ROLE daypass_ro PASSWORD 'CHANGE-ME'"
 
 One thing to know:
 
-- The password sits in `~/.daypass/config.json` (mode `0600`) on each developer's machine. It never goes to the agent: the MCP server reads the config itself and the tools expose no connection details. It does mean the password is a shared secret with no expiry; rotate it when someone leaves. If you want "leaving the company revokes access" without rotation, that is what RDS IAM gives you.
+- The password sits in `~/.daypass/config.json` (mode `0600`) on each developer's machine. No tool returns it: the MCP server reads the config itself and the tools expose no connection details. The file is protected by OS user permissions only, though, so an agent you also allow to run shell commands or read files as you can read it; see the [threat model](threat-model.md). It is also a shared secret with no expiry; rotate it when someone leaves. Core Postgres lets a role change its own password, so a direct session with it could lock everyone else out; re-set it with `ALTER ROLE` as the owner. If you want "leaving the company revokes access" without rotation, that is what RDS IAM gives you.
 
 The role has `CONNECTION LIMIT 5`. Each running MCP server holds at most 2 connections, so two Claude Code sessions on two laptops fit; a third process can hit `too many connections for role "daypass_ro"`.
 
@@ -35,7 +35,7 @@ The role has `CONNECTION LIMIT 5`. Each running MCP server holds at most 2 conne
 
 TLS is always verified; the only way to turn it off is `sslmode=disable` in the URL or `"ssl": false` on the target. Other `sslmode` values are not interpreted: `sslmode=require` still results in full certificate verification, which is stricter than what `psql` does with the same word.
 
-Verification uses the system CA store. If the server's certificate comes from the provider's own CA, `doctor` fails at `db login` with a certificate error (`self-signed certificate in certificate chain` or similar). Download the provider's CA bundle and point the target at it:
+Verification uses the system CA store (RDS hosts excepted: they use the bundled RDS CA, see [AWS RDS](aws-rds.md)). If the server's certificate comes from the provider's own CA, `doctor` fails at `db login` with a certificate error (`self-signed certificate in certificate chain` or similar). Download the provider's CA bundle and point the target at it:
 
 ```json
 {
@@ -52,12 +52,12 @@ Verification uses the system CA store. If the server's certificate comes from th
 
 ## Connection poolers
 
-Daypass sends its session settings (`default_transaction_read_only`, `statement_timeout`, `idle_in_transaction_session_timeout`, `lock_timeout`) as a startup `options` parameter on every connection. Some poolers reject startup parameters they do not know. If `db login` fails with a message about an unsupported startup parameter, use the provider's direct (non-pooled) host and port. The role-level settings in `setup-role.sql` are the same values, so a pooler that does accept the connection still enforces them.
+Daypass sends its session settings (`default_transaction_read_only`, `statement_timeout`, `idle_in_transaction_session_timeout`, `lock_timeout`, `standard_conforming_strings`) as a startup `options` parameter on every connection, and runs each call in its own `BEGIN READ ONLY` transaction with `SET LOCAL` settings. Some poolers reject startup parameters they do not know. If `db login` fails with a message about an unsupported startup parameter, use the provider's direct (non-pooled) host and port. The role-level settings in `setup-role.sql` are the same values, so a pooler that does accept the connection still enforces them.
 
 ## Supabase
 
 - The direct connection and the session-mode pooler expose Postgres on different hosts and ports; the dashboard shows both. Start with the direct connection.
-- Run the role setup with the `postgres` user's URL as `$OWNER_URL`. Tables created by Supabase migrations may be owned by another role; the owner report at the end of the setup output tells you whether `ALTER DEFAULT PRIVILEGES` covers them.
+- Run the role setup with the `postgres` user's URL as `$OWNER_URL`. Tables created by Supabase migrations may be owned by another role; the owner report at the end of the setup output shows who owns what (`owned_by_you = f`), and the self-check fails if a grant did not take effect.
 - If `db login` reports a certificate error, the direct connection is using a certificate your system does not trust. Download the CA certificate from the project's database settings and set `sslCa`.
 - For anything else, check Supabase's docs.
 

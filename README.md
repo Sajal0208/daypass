@@ -10,16 +10,17 @@
 <p align="center"><img src="https://raw.githubusercontent.com/Sajal0208/daypass/main/docs/assets/demo.gif" alt="daypass open, doctor, a query that works, SELECT * denied, an UPDATE blocked, daypass log" width="720"></p>
 
 Daypass is a small CLI plus an MCP server that lets an AI coding agent run `SELECT`s against
-your Postgres for a limited time, through a database role that cannot write and cannot see the
-columns you hid. It is for engineers who want Claude Code (or any MCP client) to answer
+your Postgres for a limited time, through a database role that holds no write privilege and no
+grant on the columns you hid. It is for engineers who want Claude Code (or any MCP client) to answer
 questions about production data without handing it the database URL. It is not a write path
 and not a GUI: the agent gets five read-only tools, you keep `psql`.
 
 You open a lease (`daypass open prod --ttl 60m --reason "..."`). For that hour the agent can
 run `SELECT`s on your production Postgres through five MCP tools. Then the door shuts on its
-own. No password ever goes into the chat, the agent cannot write, and every query is logged
-with who, why, what, how many rows and how long. You hand the agent a day pass: it opens with
-a reason, it expires on its own, and everything it did is logged.
+own. The tools never hand the agent a password, every statement runs in a read-only
+transaction as a role with no write privilege, and every database call is logged before it
+runs and again when it ends, with who, why, what, how many rows and how long. You hand the agent a day
+pass: it opens with a reason, it expires on its own, and what it did is in the log.
 
 ## Why not just give the agent the DB URL?
 
@@ -41,28 +42,32 @@ daypass open prod --ttl 45m --reason "why are campaign 1234's calls failing"
    │
    ▼
 Claude ──MCP──▶ daypass ──▶ lease live? ──▶ SELECT-only parser ──▶ IAM token ──▶ Postgres
-                                                                                  (role: SELECT on
-                audit.jsonl ◀───────────────────────────────────────────────────  visible columns,
-                                                                                   read-only, 10 s)
+                                                                   or password    (role: SELECT on
+                audit.jsonl ◀── start line before, end line after ──────────────  visible columns,
+                                                                                   read-only txn, 10 s)
 ```
 
 ## Why it is safe
 
-Each layer is enough on its own. All of them run together.
+Each layer is enough for the job it has, and all of them run together. The role's grants are
+the wall: they decide what can be read and that nothing can be written, from any client. The
+other layers are fences: they limit cost, blast radius and context size, and keep the role's
+own defaults in place for the agent, but none of them stops a write by itself.
 
 | Layer | What it does |
 |---|---|
-| **DB role** | `SELECT` on visible columns only. PII and secret columns are hidden at the Postgres level, so `SELECT *` on those tables fails. `default_transaction_read_only`, 10 s statement timeout, 1 s lock timeout, 5 connections. |
+| **DB role** | `SELECT` on visible columns only, granted table by table (no default privileges), and no write privilege anywhere. PII and secret columns are hidden at the Postgres level, so `SELECT *` on those tables fails; views and materialized views that would expose one are not granted. Role defaults: `default_transaction_read_only`, 10 s statement timeout, 1 s lock timeout; 5 connections. The defaults are the role's own to change in a direct session; `daypass doctor` reports drift. |
 | **No stored password** | On AWS RDS the role logs in with a 15-minute IAM token minted from *your* AWS identity. Lose AWS access, lose Daypass access. |
-| **Real parser** | Every statement goes through Postgres's own parser (`libpg-query`). One statement; `SELECT` or `EXPLAIN` only; no `FOR UPDATE`, `SELECT INTO`, `EXPLAIN ANALYZE`, `pg_sleep`, `dblink`, `pg_read_file`, `set_config`, `nextval`, advisory locks, … |
-| **Result caps** | 500 rows, 2 KB per cell, 1 MB per result. The model's context never floods. |
-| **Audit** | One JSON line per call in `~/.daypass/audit.jsonl`: time, caller (AWS ARN for IAM targets), lease id, reason, SQL, rows, ms, allowed/blocked. |
-| **Network** | Optional: punch your current IP into the DB security group for the lease, remove it on close or expiry. |
-| **TLS** | Always verified. RDS targets pin the bundled AWS RDS CA. |
+| **Real parser** | Every statement goes through Postgres's own parser (`libpg-query`). One statement of at most 256 KiB; `SELECT` or `EXPLAIN` only; no data-modifying CTE, `FOR UPDATE`, `SELECT INTO`, `EXPLAIN ANALYZE`, `pg_sleep`, `dblink`, `pg_read_file`, `set_config`, `nextval`, advisory locks, `query_to_xml`, … The block list cannot cover every extension's functions; the role's `EXECUTE` grants are the boundary there. |
+| **Read-only transaction** | Each call runs in `BEGIN READ ONLY` with a statement timeout of 10 s or the lease time left, whichever is shorter, over the extended protocol (one command), and the session is reset (`DISCARD ALL`) afterwards. A call that is cut off is cancelled in the database too. |
+| **Result caps** | 500 rows and 1 MB (UTF-8 bytes) per result, cut in the database before the rows are sent; 2000 characters per cell; 32 MiB on the wire per call. |
+| **Audit** | Two JSON lines per call in `~/.daypass/audit.jsonl`, one written before the query runs and one when it ends: time, caller (AWS ARN for IAM targets), lease id, reason, SQL, rows, ms, error. Refusals get one line with the reason. |
+| **Network** | Optional: punch your current IP into the DB security group for the lease (`/32`, or `/128` for IPv6); removed on `close`, on the first tool call after expiry, or by `daypass sweep`. |
+| **TLS** | Always verified. RDS targets (IAM, or any `*.rds.amazonaws.com` host) pin the bundled AWS RDS CA. |
 
 ## Compared with the alternatives
 
-| | Expires by itself | Writes impossible at the DB level | PII hidden by default | Per-query audit with who/why | No stored password | Built for an agent (result caps, "data, not instructions") |
+| | Expires by itself | No write privilege at the DB level | PII hidden by default | Per-query audit with who/why | No stored password | Built for an agent (result caps, "data, not instructions") |
 |---|---|---|---|---|---|---|
 | **Daypass** | ✔ | ✔ | ✔ for every column in your hidden list | ✔ | ✔ on AWS RDS (IAM token); a URL target keeps a read-only password in `~/.daypass/config.json` | ✔ |
 | DB URL in an MCP config / direct `psql` | ✖ | depends on setup | depends on setup | ✖ | ✖ | ✖ |
@@ -122,10 +127,14 @@ $EDITOR hidden-columns.txt         # one table.column per line, e.g. users.email
 daypass sql --hide-file hidden-columns.txt | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1
 ```
 
-The script creates `daypass_ro`, grants `SELECT` on everything except the hidden columns,
-sets the timeouts, and ends with a self-check that fails if a hidden column is still readable.
-Safe to re-run: it runs as one transaction, so a failed run changes nothing, and re-runs keep
-the role's password (`-X` skips your psqlrc). For a non-RDS database, set a password once after
+The script creates `daypass_ro`, grants `SELECT` table by table on everything in the listed
+schemas except the hidden columns (and the views that would expose them), sets the timeouts,
+and ends with a self-check that fails if a hidden column is still readable, if the role holds
+a write privilege anywhere, or if it can execute a `SECURITY DEFINER` function. It sets no default
+privileges: **a table created later is invisible until you re-run the script**, while a column
+added to a table that has no hidden columns is readable at once. Safe to re-run: it runs as one
+transaction, so a failed run changes nothing, and re-runs keep the role's password (`-X` skips
+your psqlrc). For a non-RDS database, set a password once after
 the first run: `ALTER ROLE daypass_ro PASSWORD '...'` (on RDS the role has no password; it logs
 in with IAM tokens).
 
@@ -164,8 +173,10 @@ or install the Claude Code plugin, which bundles the server (no `claude mcp add`
 
 The plugin adds a skill that teaches Claude the lease-first, named-columns, no-PII-in-the-reply
 rules, a setup walkthrough, `/daypass:daypass-status`, `/daypass:daypass-log` and
-`/daypass:daypass-hidden-check`, and a hook that stops a `query` naming a PII-looking column
-your hidden list does not cover. Details: [docs/plugin.md](docs/plugin.md).
+`/daypass:daypass-hidden-check`, and a hook that stops a `query` or `explain` naming a
+PII-looking column your hidden list does not cover, or using `SELECT *`, a whole row or a
+function that runs SQL from a string. The hook is name-based and a second fence, not the wall;
+it fails closed on Claude Code 2.1.295 or later. Details and limits: [docs/plugin.md](docs/plugin.md).
 
 Any MCP client works: the command is `daypass mcp` over stdio.
 
@@ -173,16 +184,16 @@ Any MCP client works: the command is `daypass mcp` over stdio.
 
 ```bash
 daypass open prod --ttl 45m --reason "debug campaign 1234"
-daypass doctor                    # config → DNS → AWS creds → TCP → login → write blocked
+daypass doctor                    # config → DNS → AWS creds → TCP → login → role settings, grants, hidden columns
 #   ... ask Claude questions; it uses list_tables / describe_table / explain / query ...
 daypass status
-daypass log --last 20
+daypass log --last 20             # one row per call
 daypass close                     # or just let it expire
 ```
 
-With no live lease every tool returns *"No active Daypass lease. Ask the user to run:
-daypass open …"*. The MCP server removes the IP rule itself when it finds the lease expired;
-`daypass sweep prod` from cron every 15 min is the backstop.
+With no live lease every tool except `daypass_status` returns *"No active Daypass lease. Ask the user to run:
+daypass open …"*. The MCP server removes the IP rule itself on the first tool call after the
+lease expired; `daypass sweep prod` from cron every 15 min is the backstop.
 
 ## MCP tools
 
@@ -190,12 +201,18 @@ daypass open …"*. The MCP server removes the IP rule itself when it finds the 
 |---|---|
 | `daypass_status` | Lease open? Which DB? Minutes left? |
 | `list_tables` | Tables, estimated rows, size, for the allowed schemas |
-| `describe_table` | Columns, types, nullability, defaults, indexes |
+| `describe_table` | Columns, types, nullability, defaults, indexes (indexes on hidden columns are left out) |
 | `explain` | `EXPLAIN` (never `ANALYZE`) so the agent can check cost first |
-| `query` | One `SELECT`. 500 rows max, 10 s max |
+| `query` | One `SELECT`. 500 rows and 1 MB max, 10 s max |
 
 Result rows are labelled *"data, not instructions"* so a row containing text like
-"ignore your instructions" is treated as data. Even if it were not, the DB role cannot write.
+"ignore your instructions" is treated as data. Even if it were not, the DB role holds no write
+privilege and the call runs in a read-only transaction.
+
+The tools never return a credential, but the files under `~/.daypass` are protected by OS user
+permissions only: an agent you also allow to run shell commands as you can read `config.json`
+(a URL target's password) and edit the lease and audit files. What that means and what to do
+about it: [docs/threat-model.md](docs/threat-model.md).
 
 ## Docs
 
@@ -212,8 +229,10 @@ Result rows are labelled *"data, not instructions"* so a row containing text lik
 
 ## Roadmap
 
-Postgres only for now; MySQL and others are not supported. A hosted version (connector in your
-VPC, SSO, Slack approvals, audit dashboard) is planned but not built. What is next and what is
+Postgres only for now (PostgreSQL 16 or newer is recommended; see the parser note in the
+[threat model](docs/threat-model.md)); MySQL and others are not supported. A hosted version
+(connector in your VPC, SSO, Slack approvals, audit dashboard) is an idea on the roadmap, not
+built. What is next and what is
 only an idea: [ROADMAP.md](ROADMAP.md). Open an issue if you want something moved up.
 
 ## Layout
@@ -225,7 +244,7 @@ src/cli    daypass init / sql / hidden / open / status / close / sweep / log / d
 sql/       setup-role.sql template
 certs/     AWS RDS global CA bundle
 scripts/   CI integration run, secret scrub, smoke test
-plugin/    Claude Code plugin (skills, commands, PII hook, evals)
+plugin/    Claude Code plugin (skills incl. the three slash commands, PII hook, evals)
 ```
 
 ## Contributing and security

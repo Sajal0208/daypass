@@ -50,7 +50,7 @@ The bare MCP server gives Claude five tools: `daypass_status`, `list_tables`,
 | `/daypass:daypass-status` | Is a lease open, on which target, how long is left. |
 | `/daypass:daypass-log` | The last audit entries: who, why, what SQL, rows, ms. |
 | `/daypass:daypass-hidden-check` | Compares `hidden-columns.txt` with the schema and reports drift. |
-| PII guard hook | `PreToolUse` on `query`: before the SQL leaves Claude Code it pulls every identifier out of the statement, ignoring string literals and comments, checks each against the same name heuristic `daypass hidden suggest` uses, and blocks the call when one looks like personal or secret data and the hidden-columns list says nothing about it. |
+| PII guard hook | `PreToolUse` on `query` and `explain`: before the SQL leaves Claude Code it tokenizes the statement (quoting, dollar quoting, escapes and comments included), blocks `SELECT *`, `TABLE x`, column alias lists on tables, whole-row references, planner statistics and the functions that run SQL from a string or dump whole tables, and checks every identifier against the same name heuristic `daypass hidden suggest` uses, blocking the call when one looks like personal or secret data and the hidden-columns list says nothing about it. It fails closed. |
 | Evals | Scenarios under `evals/` that check the skills behave as documented (no lease, lease open, hidden column). |
 
 ## Daily use
@@ -65,3 +65,34 @@ daypass close
 With no lease open, every tool except `daypass_status` answers
 *"No active Daypass lease. Ask the user to run: daypass open …"*, and the skill replies
 with the exact `daypass open` line to run.
+
+## When the hook blocks, and when it fails
+
+The PII guard runs on every `query` and `explain` call. It blocks, with a one-line reason
+Claude relays to you, when the SQL:
+
+- selects `*` or `alias.*` anywhere (only `count(*)` is fine), uses `TABLE x`, or renames a
+  table's columns by position with an alias list (`from users u(a, b, c)`): name the columns;
+- uses a table or its alias as a whole row (`to_jsonb(u)`, `row_to_json(u)`, `(u).x`,
+  `u::text`, `select u from users u`, attribute notation such as `u.to_jsonb`): name the columns;
+- calls `query_to_xml`, `table_to_xml`, `schema_to_xml`, `database_to_xml`, `xmltable`,
+  `ts_stat`, `ts_rewrite`, their `*_xmlschema` / `cursor_to_xml` relatives, or the `dblink` /
+  `crosstab` extension functions, which run SQL from a string or return whole rows the guard
+  cannot inspect, or reads planner statistics (`pg_stats`, `pg_statistic`), which hold sample
+  column values;
+- has a `'...'` literal with a backslash before a quote whose end depends on
+  `standard_conforming_strings`: write `''` or `E'...'`;
+- names a column that looks like personal or secret data (`phone`, `email`, `token`, `ssn`,
+  `card_number`, ...) and the hidden-columns list (`DAYPASS_HIDDEN_FILE`, else
+  `$DAYPASS_HOME/hidden-columns.txt`, else `~/.daypass/hidden-columns.txt`) neither hides it
+  nor lists it on a `!` allow line. The reason says which line to add.
+
+It fails closed: no list file, an unreadable list, stdin that is not a tool call, a tool input
+without a string `sql`, a crash or the 10 s timeout all block the call (`onFailure: block` in
+`hooks/hooks.json`). The one switch is `DAYPASS_PII_HOOK=off` (also `false` or `0`) in the
+environment Claude Code runs in, which lets everything through for that session.
+
+It is name-based: a PII column with a name the heuristic does not know (`raw`, `data`,
+`content`) is not flagged, `users.phone` in the list also covers `tickets.phone`, and a
+user-defined function on a table's row type called as `u.f` is not recognised. The database role is the wall; the hook
+is the fence in front of it.

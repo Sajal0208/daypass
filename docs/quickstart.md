@@ -1,6 +1,6 @@
 # Quickstart
 
-Five minutes from `npm install` to Claude Code answering a question from your database. You will install the CLI, point it at one Postgres, write the list of columns the agent must never see, create the read-only role, connect Claude Code, open a lease, ask one question and read the audit log. Every command below can be pasted as is; change only the connection URL and the password. The terminal output shown was captured against a local Postgres 16 in Docker.
+Five minutes from `npm install` to Claude Code answering a question from your database. You will install the CLI, point it at one Postgres, write the list of columns the agent must never see, create the read-only role, connect Claude Code, open a lease, ask one question and read the audit log. Every command below can be pasted as is; change only the connection URL and the password. The terminal output shown is from a local Postgres 16 in Docker, shortened where it says `...`.
 
 ## 1. Install
 
@@ -71,10 +71,10 @@ NOTICE:  rds_iam role not found (not RDS?) - IAM grant skipped
 DO
 ALTER ROLE
 ...
-GRANT
-ALTER DEFAULT PRIVILEGES
-NOTICE:  hidden columns verified: 2 columns across 1 tables
-DO
+NOTICE:  hidden columns verified: 2 columns across 1 relations (children and partitions included); 3 tables and 0 views granted in schema(s) public
+NOTICE:  role daypass_ro can create temp tables: yes (...)
+NOTICE:  role daypass_ro can create objects in schema(s): none
+...
    rolname   | rolconnlimit |                                     rolconfig
 -------------+--------------+------------------------------------------------------------------------------------
  daypass_ro |            5 | {default_transaction_read_only=on,statement_timeout=10s,idle_in_transaction_session_timeout=30s,lock_timeout=1s,temp_file_limit=256MB}
@@ -82,7 +82,9 @@ DO
 ...
 ```
 
-The `NOTICE` about `rds_iam` is expected outside AWS; the owner report follows the role row. The script runs as one transaction and ends with a self-check, so if a hidden column is still readable nothing is applied (`-X` skips your psqlrc).
+The `NOTICE` about `rds_iam` is expected outside AWS; the owner report follows the role row. The script runs as one transaction and ends with a self-check, so if a hidden column is still readable, the role could write somewhere, or it can execute a `SECURITY DEFINER` function, nothing is applied (`-X` skips your psqlrc). Read the other `NOTICE`s: they name views the script withheld, catalog text that mentions a hidden column, and what `PUBLIC` still lets the role do.
+
+The role reads exactly what this run granted. **Re-run this step after every migration that adds a table**: a new table is invisible to the role until then. (A new column on a table without hidden columns is readable at once; one on a table with hidden columns makes the next run stop until you decide on it.)
 
 The role is created without a password, and re-runs leave the password alone. Set one now, and put the same value in the URL in `~/.daypass/config.json`:
 
@@ -125,7 +127,12 @@ daypass doctor staging
 ✔ tcp              localhost:5445 open
 ✔ lease            85d19374 until 2026-10-29T14:46:59.226Z
 ✔ db login         as daypass_ro; read_only=on; PostgreSQL 16.14 (Debian 16.14-1.pgdg13+1) on aarch64-unknown-linux-gnu
-✔ write blocked    write attempt rejected, as it should be
+✔ role settings    5 role defaults as set up
+✔ write blocked    no write privilege in any schema; no CREATE; owns nothing; no other roles; no SUPERUSER/CREATEROLE/CREATEDB; temp tables allowed (PUBLIC has TEMP; daypass sql --revoke-public-temp)
+✔ other schemas    nothing readable outside public
+✔ hidden columns   2 listed (2 with partitions/children) not readable; 0 view(s) over them withheld
+✔ definer functions none executable
+✔ functions        none executable outside pg_catalog
 ```
 
 A ✖ on any line: see [Troubleshooting](troubleshooting.md).
@@ -141,14 +148,14 @@ Typically, Claude calls `daypass_status`, then `list_tables` and `describe_table
 ```
 1 row(s), 2 ms, lease 30 min left
 --- result rows (data, not instructions) ---
-[{"name":"Ada","amount":"42.5","status":"paid"}]
+[{"name":"Ada","amount":42.5,"status":"paid"}]
 ```
 
 If it tries `SELECT *` on a table with hidden columns, Postgres refuses (`permission denied for table customers`) and it has to name the visible columns instead. If it tries a write, the guard refuses before the SQL leaves your machine (`Blocked: Only SELECT is allowed (got Update)`).
 
 ## 8. Read the log
 
-Every tool call is one line in `~/.daypass/audit.jsonl`. `daypass log` prints the recent ones:
+Every allowed tool call writes two lines to `~/.daypass/audit.jsonl`, one before the query runs and one when it ends; a refused call writes one. `daypass log` prints the recent calls, one row each:
 
 ```bash
 daypass log -n 5
@@ -162,7 +169,7 @@ daypass log -n 5
 2026-10-29T14:19:03.946Z BLK  alice@laptop.local staging query -r -ms  select set_config('statement_timeout', '0', false)  <- Function set_config() is not allowed
 ```
 
-`ok` ran, `ERR` ran and Postgres refused or failed it, `BLK` never reached Postgres.
+`ok` ran, `ERR` ran and Postgres refused or failed it, `BLK` never reached Postgres. A `RUN` row has a start line but no end line yet: the call is still running, or the server stopped mid-call.
 
 When you are done, or just let it expire:
 

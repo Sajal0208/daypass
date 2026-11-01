@@ -3,6 +3,10 @@
 _2026-10-28. Status: v1 built, reviewed and in production use. The 2026-10-28
 review changed the parts marked (rev)._
 
+> Historical design note for 0.1.0. A security review on 2026-10-30 changed the role setup,
+> `daypass doctor`, the audit format and the result caps; where this page and the code or the
+> current docs disagree, the code and [the threat model](../threat-model.md) are right.
+
 Daypass gives a Claude Code session short-lived, read-only, logged access to a
 production database. Built for one team first, then published as `daypass`.
 

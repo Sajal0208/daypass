@@ -35,7 +35,7 @@ aws rds modify-db-instance \
   --apply-immediately
 ```
 
-Then run the role setup from [Quickstart](quickstart.md) step 4 as the master user. On RDS the script finds the `rds_iam` role and grants it to `daypass_ro`; that grant is what allows token login. Do not set a password on the role.
+Then run the role setup from [Quickstart](quickstart.md) step 4 as the master user. On RDS the script finds the `rds_iam` role and grants it to `daypass_ro`; that grant is what allows token login. Do not set a password on the role. On PostgreSQL 16+, re-runs must come from the master user that created the role (it holds ADMIN OPTION on it) or a role granted `daypass_ro ... WITH ADMIN OPTION`; anyone else gets an error naming the `GRANT` to run. Set `rds.restrict_password_commands = 1` in the parameter group so the role cannot change its own password. The role is `NOINHERIT`, so on PostgreSQL 16+ the `rds_iam` grant is made with `INHERIT FALSE`; RDS checks membership, not inheritance, for IAM login, but this was not tested here on 16 (only PostgreSQL 14 was available): if IAM login fails after the setup, check `\drg daypass_ro`.
 
 ## 2. IAM permissions per person
 
@@ -49,8 +49,8 @@ arn:aws:rds-db:<region>:<account-id>:dbuser:<db-resource-id>/daypass_ro
 
 If you use the IP rule, three more actions on the database's security group:
 
-- `ec2:AuthorizeSecurityGroupIngress`: add the `/32` rule on `open`
-- `ec2:RevokeSecurityGroupIngress`: remove it on `close`, on expiry, and in `sweep`
+- `ec2:AuthorizeSecurityGroupIngress`: add the `/32` (or `/128`) rule on `open`
+- `ec2:RevokeSecurityGroupIngress`: remove it on `close`, on the first tool call after expiry, and in `sweep`
 - `ec2:DescribeSecurityGroupRules`: `sweep` lists rules to find expired ones
 
 `sts:GetCallerIdentity`, which Daypass calls to record who opened the lease, needs no permission.
@@ -92,15 +92,15 @@ Attach it to a group or role that each developer assumes under their own identit
 
 With `securityGroupId` set, `daypass open`:
 
-1. asks `https://checkip.amazonaws.com` for your public IPv4 address,
-2. adds an inbound TCP rule for `<ip>/32` on the target's port, described `daypass:<lease-id> until <expiresAt>`,
+1. writes the lease first, then asks `https://checkip.amazonaws.com` for your public IP address,
+2. adds an inbound TCP rule for `<ip>/32` (an IPv4 address) or `<ip>/128` (an IPv6 address) on the target's port, described `daypass:<lease-id> until <expiresAt>`,
 3. stores the rule id in the lease.
 
-`daypass close` revokes that rule. If the lease expires without `close`, the next MCP tool call sees the expired lease and revokes the rule before refusing the call.
+`daypass close` revokes that rule. If the lease expires without `close`, the next MCP tool call sees the expired lease and revokes the rule before refusing the call; if that revoke fails, it is silent and the sweep below removes the rule. Until then the rule stays in the group. If `open` crashes after AWS created the rule but before the rule id was written, the rule is still tagged with the lease id and its expiry, and `sweep` removes it once that time has passed.
 
 **Remove any `0.0.0.0/0` rule from that security group first.** A per-IP rule adds nothing while the group is open to the world. Pass `--no-network` to `open` when you are already inside the VPC and do not want a rule.
 
-The rule is IPv4 only. If your public address changes during a lease (new Wi-Fi, VPN toggle), close and reopen.
+The rule covers the one address `checkip.amazonaws.com` saw. If your public address changes during a lease (new Wi-Fi, VPN toggle), close and reopen.
 
 ## 4. Sweep cron
 
@@ -114,7 +114,7 @@ Output when nothing is left over is `Nothing to sweep.`
 
 ## 5. TLS and the pinned CA
 
-RDS targets always verify TLS, and verify it against the AWS RDS global CA bundle that ships inside the package (`certs/global-bundle.pem`, from `truststore.pki.rds.amazonaws.com`). The token and the rows travel over the public internet, so a host that is not a real RDS endpoint cannot collect either. `"ssl": false` turns TLS off for any target, RDS included. Never set it on a target with `region`.
+RDS targets always verify TLS, and verify it against the AWS RDS global CA bundle that ships inside the package (`certs/global-bundle.pem`, from `truststore.pki.rds.amazonaws.com`). That covers every target with `region` and every target whose host ends in `.rds.amazonaws.com`, URL and password targets included. The token and the rows travel over the public internet, so the server has to present a certificate that chains to Amazon's RDS roots. A target that reaches RDS through a CNAME of your own and has no `region` uses the system CA store, which does not carry those roots: set `sslCa` to the bundle (or add `region`). `sslCa` always wins over the bundle. `"ssl": false` turns TLS off for any target, RDS included. Never set it on an RDS target.
 
 Tokens are minted locally by `@aws-sdk/rds-signer` (a presigned request, no API call) and are valid for 15 minutes; Daypass discards its connection pool on the first call after 10 minutes and mints a fresh token, so a token never expires mid-pool.
 
@@ -129,4 +129,4 @@ daypass doctor prod
 
 ## Known limit: load on the primary
 
-Daypass points at whatever host you configure. On a busy primary, a scan of a large table competes with production traffic; the 10 s statement timeout and the 5-connection limit bound the damage but do not remove it. Pointing a target at a read replica is the real fix and is a config change on your side. The 10 s timeout is set for the primary case; raise it only once the target is a replica, and in both places: `sql/setup-role.sql` (the role setting) and `STATEMENT_TIMEOUT_MS` in `src/mcp/db.ts` (the session option, which overrides the role setting).
+Daypass points at whatever host you configure. On a busy primary, a scan of a large table competes with production traffic; the 10 s statement timeout and the 5-connection limit bound the damage but do not remove it. Pointing a target at a read replica is the real fix and is a config change on your side. The 10 s timeout is set for the primary case; raise it only once the target is a replica, and in both places: `sql/setup-role.sql` (the role setting) and `STATEMENT_TIMEOUT_MS` in `src/mcp/db.ts` (the session option, which overrides the role setting). `daypass doctor` accepts a role `statement_timeout` up to 5min.

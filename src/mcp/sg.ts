@@ -5,6 +5,7 @@ import {
   DescribeSecurityGroupRulesCommand,
 } from '@aws-sdk/client-ec2';
 import { fromIni } from '@aws-sdk/credential-providers';
+import { isIPv4, isIPv6 } from 'node:net';
 
 export const RULE_PREFIX = 'daypass:';
 
@@ -12,14 +13,27 @@ function client(region: string, profile?: string) {
   return new EC2Client({ region, ...(profile ? { credentials: fromIni({ profile }) } : {}) });
 }
 
-export async function myPublicIp(): Promise<string> {
-  const r = await fetch('https://checkip.amazonaws.com', { signal: AbortSignal.timeout(5000) });
-  const ip = (await r.text()).trim();
-  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) throw new Error(`Could not read public IP (got "${ip}")`);
+/** The body of a what-is-my-ip reply, validated as IPv4 or IPv6. */
+export function parsePublicIp(body: string): string {
+  const ip = body.trim();
+  if (!isIPv4(ip) && !isIPv6(ip)) throw new Error(`Could not read public IP (got "${ip.slice(0, 60)}")`);
   return ip;
 }
 
-/** Adds a /32 ingress rule tagged with the lease id. Returns the rule id. */
+export async function myPublicIp(): Promise<string> {
+  const r = await fetch('https://checkip.amazonaws.com', { signal: AbortSignal.timeout(5000) });
+  return parsePublicIp(await r.text());
+}
+
+/** One ingress permission for a single address: /32 for IPv4, /128 for IPv6. */
+export function ipPermission(o: { ip: string; port: number; description: string }) {
+  const base = { IpProtocol: 'tcp', FromPort: o.port, ToPort: o.port };
+  if (isIPv4(o.ip)) return { ...base, IpRanges: [{ CidrIp: `${o.ip}/32`, Description: o.description }] };
+  if (isIPv6(o.ip)) return { ...base, Ipv6Ranges: [{ CidrIpv6: `${o.ip}/128`, Description: o.description }] };
+  throw new Error(`"${o.ip}" is not an IP address`);
+}
+
+/** Adds a single-address ingress rule (/32 or /128) tagged with the lease id. Returns the rule id. */
 export async function allowIp(o: {
   region: string;
   profile?: string;
@@ -33,14 +47,7 @@ export async function allowIp(o: {
   const res = await ec2.send(
     new AuthorizeSecurityGroupIngressCommand({
       GroupId: o.groupId,
-      IpPermissions: [
-        {
-          IpProtocol: 'tcp',
-          FromPort: o.port,
-          ToPort: o.port,
-          IpRanges: [{ CidrIp: `${o.ip}/32`, Description: `${RULE_PREFIX}${o.leaseId} until ${o.expiresAt}` }],
-        },
-      ],
+      IpPermissions: [ipPermission({ ip: o.ip, port: o.port, description: `${RULE_PREFIX}${o.leaseId} until ${o.expiresAt}` })],
     }),
   );
   const id = res.SecurityGroupRules?.[0]?.SecurityGroupRuleId;

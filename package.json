@@ -18,7 +18,7 @@
   "author": "Vocobase <developers@vocobase.com>",
   "type": "module",
   "bin": {
-    "daypass": "./dist/cli/main.js"
+    "daypass": "dist/cli/main.js"
   },
   "main": "./dist/mcp/index.js",
   "types": "./dist/mcp/index.d.ts",
@@ -48,7 +48,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Sajal0208/daypass.git"
+    "url": "git+https://github.com/Sajal0208/daypass.git"
   },
   "homepage": "https://github.com/Sajal0208/daypass#readme",
   "bugs": "https://github.com/Sajal0208/daypass/issues",

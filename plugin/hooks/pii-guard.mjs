@@ -1,13 +1,28 @@
 #!/usr/bin/env node
 /**
- * PreToolUse hook for the Daypass `query` tool: a second fence on the client, in front of the
- * column grants that Postgres enforces. It reads the tool call from stdin, pulls every identifier
- * out of the SQL, and blocks (exit 2, reason on stderr) when one looks like personal or secret
- * data and the hidden-columns list says nothing about it, hidden or allowed. A column the list
- * hides is let through (the role cannot read it anyway); one on a `!` allow line was reviewed.
+ * PreToolUse hook for the Daypass `query` and `explain` tools: a second fence on the client, in
+ * front of the column grants that Postgres enforces. It reads the tool call from stdin, tokenizes
+ * the SQL the way Postgres does (quoting, dollar quoting, escapes, nested comments), and blocks
+ * (exit 2, reason on stderr) when
+ *
+ *   - a `'...'` literal ends elsewhere when standard_conforming_strings is off (`'a\'' ...`),
+ *   - a function that runs SQL from a string or returns whole rows, tables or schemas is called
+ *     (`query_to_xml`, `schema_to_xml`, `ts_stat`, `dblink`, ...), or planner statistics
+ *     (`pg_stats`, `pg_statistic`) are read,
+ *   - a statement contains `*` or `alias.*` that is not `count(*)`, a `TABLE x` command, or a
+ *     column alias list on a table (`from users u(a, b, c)` renames columns by position),
+ *   - a FROM table or its alias is used as a whole row (`to_jsonb(u)`, `(u).x`, `u::text`,
+ *     `select u`, attribute notation `u.to_jsonb`), or
+ *   - an identifier looks like personal or secret data (as written, or as Postgres folds and
+ *     truncates it; table/CTE names and output aliases are not column reads and are skipped) and
+ *     the hidden-columns list says nothing about it, hidden or allowed. A column the list hides
+ *     is let through (the role cannot read it anyway); one on a `!` allow line was reviewed.
+ *
+ * The hook fails closed: unparsable stdin, a tool input without a string `sql`, or any thrown
+ * error exits 2 with a reason, and hooks.json sets `onFailure: block` for a crash or a timeout.
  *
  * Dependency-free on purpose: it runs on every query, from a plugin directory, with no install.
- * The name heuristic (WORDS, SPECIAL, ALWAYS, SAFE_TAIL, toSnake, looksSensitive) is a verbatim
+ * The name heuristic (WORDS, SPECIAL, ALWAYS, SAFE_KEY, SAFE_TAIL, STRONG, toSnake, looksSensitive) is a verbatim
  * copy of src/core/hidden.ts, which cannot be imported from here. Change both files together:
  * the parity test in test/plugin-hook.test.ts guards against drift.
  */
@@ -17,95 +32,652 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 // --- name heuristic: mirrors src/core/hidden.ts; test/plugin-hook.test.ts guards drift -----
+/** Words that mark a column as personal or secret data. Matched on snake_case / camelCase parts. */
 const WORDS = new Set([
-  'phone', 'mobile', 'email', 'token', 'secret', 'key', 'transcript', 'password', 'passwd',
-  'address', 'ssn', 'iban', 'card', 'dob', 'birth', 'birthday', 'birthdate', 'salt', 'otp', 'pin',
-  'passport', 'license', 'licence', 'routing', 'national',
+  'phone', 'mobile', 'email', 'emails', 'mail', 'token', 'secret', 'key', 'transcript', 'password', 'passwd',
+  'address', 'ssn', 'iban', 'card', 'cvv', 'dob', 'birth', 'birthday', 'birthdate', 'salt', 'otp', 'pin',
+  'passport', 'license', 'licence', 'routing', 'aadhaar', 'pan', 'ip', 'surname', 'username', 'gender', 'race',
+  'religion', 'notes', 'body', 'payload', 'metadata', 'recording', 'lat', 'lng', 'latitude', 'longitude',
+  'postal', 'zip', 'zipcode', 'caller', 'encrypted',
 ]);
-const SPECIAL = /^encrypted_|^prompt_snapshot$|^(lines|credentials)$/;
-const ALWAYS = /^(national|tax|government)_(id|number)$|^(bank_)?account_number$/;
+/** Prefix/exact-name cases; `lines` and `prompt_snapshot` are free-text transcript/log columns from the first deployment. */
+const SPECIAL =
+  /^encrypted_|^health_|^prompt_snapshot$|^(lines|credentials)$|^(first|last|full|middle|given|family|user)_name$|^e_mail$|^user_agent$/;
+/** Identifiers that are themselves PII, even though they end in a normally-safe tail. */
+const ALWAYS = /^(national|tax|government)_(id|number)$|^(bank_)?account_number$|^national_insurance(_number)?$|^device_id$|^stripe_customer_id$/;
+/** `key` names that are not credentials: public keys, storage and cache keys, partition keys. */
+const SAFE_KEY = /^(public|partition|sort|s_?3|cache|idempotency|primary|shard|lookup|config|object|storage|bucket|redis)_key$/;
+/** Suffixes that make a sensitive-looking name safe (users.email_verified is a boolean, api_keys.key_prefix is public). */
 const SAFE_TAIL =
-  /_(verified|confirmed|count|used|at|id|type|status|enabled|required|country|layout|limit|prefix|version|expiry|expires|expiration|rounds|domain)$/;
+  /_(verified|confirmed|count|used|at|id|type|status|enabled|required|country|country_code|brand|layout|limit|prefix|version|expiry|expires|expiration|rounds|domain|last_\d+)$/;
+/** Words that beat an `_id` / `_type` tail: email_id, secret_key_id and api_key_hash_type are still sensitive. */
+const STRONG = new Set(['email', 'secret', 'key', 'token', 'password']);
 
+/**
+ * snake_case for snake_case, camelCase and quoted names: phoneNumber -> phone_number,
+ * APIKey -> api_key, Address1 -> address_1, "ship.address" -> ship_address.
+ */
 function toSnake(name) {
   return name
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/([A-Za-z])([0-9])/g, '$1_$2')
+    .replace(/[^A-Za-z0-9]+/g, '_')
     .toLowerCase();
 }
 
 export function looksSensitive(column) {
   const name = toSnake(column);
   if (ALWAYS.test(name)) return true;
-  if (SAFE_TAIL.test(name)) return false;
+  if (SAFE_KEY.test(name)) return false;
+  const parts = name.split('_');
+  if (SAFE_TAIL.test(name) && !(/_(id|type)$/.test(name) && parts.some((p) => STRONG.has(p)))) return false;
   if (SPECIAL.test(name)) return true;
-  return name.split('_').some((part) => WORDS.has(part));
+  return parts.some((part) => WORDS.has(part));
 }
 // -----------------------------------------------------------------------------------------
 
+/**
+ * Postgres reserved words (plus the type/function-reserved ones): never a column name when
+ * unquoted, so they are skipped by the name heuristic and do not count as operands.
+ */
 const KEYWORDS = new Set([
-  'select', 'from', 'where', 'join', 'on', 'and', 'or', 'not', 'as', 'limit', 'order', 'by', 'group',
-  'having', 'left', 'right', 'inner', 'outer', 'count', 'sum', 'avg', 'min', 'max', 'distinct', 'case',
-  'when', 'then', 'else', 'end', 'null', 'true', 'false', 'is', 'in', 'like', 'ilike', 'between', 'asc',
-  'desc', 'union', 'all', 'with', 'exists', 'cast', 'interval', 'date', 'now', 'coalesce', 'nullif',
-  'explain', 'offset',
+  'all', 'analyse', 'analyze', 'and', 'any', 'array', 'as', 'asc', 'asymmetric', 'authorization', 'binary',
+  'both', 'case', 'cast', 'check', 'collate', 'collation', 'column', 'concurrently', 'constraint', 'create',
+  'cross', 'current_catalog', 'current_date', 'current_role', 'current_schema', 'current_time',
+  'current_timestamp', 'current_user', 'default', 'deferrable', 'desc', 'distinct', 'do', 'else', 'end',
+  'except', 'false', 'fetch', 'for', 'foreign', 'freeze', 'from', 'full', 'grant', 'group', 'having', 'ilike',
+  'in', 'initially', 'inner', 'intersect', 'into', 'is', 'isnull', 'join', 'lateral', 'leading', 'left', 'like',
+  'limit', 'localtime', 'localtimestamp', 'natural', 'not', 'notnull', 'null', 'offset', 'on', 'only', 'or',
+  'order', 'outer', 'overlaps', 'placing', 'primary', 'references', 'returning', 'right', 'select',
+  'session_user', 'similar', 'some', 'symmetric', 'table', 'tablesample', 'then', 'to', 'trailing', 'true',
+  'union', 'unique', 'user', 'using', 'variadic', 'verbose', 'when', 'where', 'window', 'with',
+  // not reserved, but they end or start clauses and are never table aliases
+  'explain', 'values', 'by',
 ]);
-/** Words that can follow a table name in FROM/JOIN and are therefore never its alias. */
-const NOT_ALIAS = new Set([
-  'on', 'where', 'join', 'left', 'right', 'inner', 'outer', 'cross', 'full', 'natural', 'group',
-  'order', 'limit', 'union', 'having', 'using', 'lateral', 'offset', 'as',
+/** Keywords that stand for a value, so a bare name right after them is a column alias, not a whole-row use. */
+const OPERAND_KEYWORDS = new Set([
+  'end', 'null', 'true', 'false', 'current_date', 'current_time', 'current_timestamp', 'localtime',
+  'localtimestamp', 'current_user', 'session_user', 'user', 'current_role', 'current_catalog', 'current_schema',
 ]);
+/**
+ * Words that are never a table alias: Postgres's reserved and type/function-name keywords
+ * (pg_get_keywords() catcode R and T on PG 14). Unreserved words such as `by`, `values` and
+ * `explain` are valid aliases (`from leads as by`), so they are not in here.
+ */
+const NOT_ALIAS = new Set([...KEYWORDS].filter((w) => !['explain', 'values', 'by'].includes(w)));
+/** `from` inside these function calls is a keyword argument, not a FROM clause. */
+const FROM_IN_ARGS = new Set(['extract', 'substring', 'trim', 'overlay', 'position']);
+/**
+ * Functions that execute SQL given as a string, or return whole rows, tables or schemas the guard
+ * cannot inspect. Core Postgres first; then the dblink, tablefunc and xml2 extensions, which are
+ * blocked by name in case a database has them installed.
+ */
+const UNINSPECTABLE = new Set([
+  'query_to_xml', 'query_to_xml_and_xmlschema', 'query_to_xmlschema', 'cursor_to_xml', 'cursor_to_xmlschema',
+  'table_to_xml', 'table_to_xml_and_xmlschema', 'table_to_xmlschema', 'xmltable',
+  'schema_to_xml', 'schema_to_xmlschema', 'schema_to_xml_and_xmlschema',
+  'database_to_xml', 'database_to_xmlschema', 'database_to_xml_and_xmlschema',
+  'ts_stat', 'ts_rewrite',
+  'dblink', 'dblink_exec', 'dblink_open', 'dblink_fetch', 'dblink_send_query', 'dblink_get_result',
+  'crosstab', 'crosstab2', 'crosstab3', 'crosstab4', 'connectby', 'xpath_table',
+]);
+/**
+ * Functions that take a whole row and can be called in attribute notation: Postgres reads
+ * `l.to_jsonb` as `to_jsonb(l)` when `l` has no column of that name. Generated on PG 14 from
+ * pg_proc (every function callable with one argument of type record, anyelement, "any",
+ * anynonarray or anycompatible*, or VARIADIC "any"), then kept to the ones that resolve as
+ * `l.<name>` and return or encode the row's values; plus hstore (extension). Left out because
+ * they return no values and are common column names: count, rank, mode, lead, lag and the other
+ * aggregates and window functions that error without OVER / WITHIN GROUP, num_nulls,
+ * num_nonnulls, pg_typeof, pg_column_size, pg_column_compression, pg_collation_for.
+ */
+const WHOLE_ROW_ATTR = new Set([
+  'to_json', 'to_jsonb', 'row_to_json', 'json_build_array', 'jsonb_build_array', 'json_build_object',
+  'jsonb_build_object', 'json_agg', 'jsonb_agg', 'array_agg', 'concat', 'quote_literal', 'quote_nullable',
+  'record_out', 'record_send', 'hash_record', 'any_out', 'anyelement_out', 'anynonarray_out', 'anycompatible_out',
+  'anycompatiblenonarray_out', 'hstore',
+]);
+/** Planner statistics: sample values (most_common_vals, histogram_bounds) of every readable column. */
+const STATS = new Set(['pg_stats', 'pg_statistic', 'pg_stats_ext', 'pg_stats_ext_exprs', 'pg_statistic_ext_data']);
+/** Words that end a FROM list. */
+const FROM_END = new Set([
+  'where', 'group', 'having', 'window', 'order', 'limit', 'offset', 'fetch', 'for', 'union', 'intersect',
+  'except', 'returning', 'into', 'select',
+]);
+/** First words of a subquery inside parentheses (anything else in FROM parentheses is a join). */
+const SUBQUERY_START = new Set(['select', 'values', 'with', 'table']);
 
 export function hiddenFilePath(env) {
-  return env.DAYPASS_HIDDEN_FILE ?? join(homedir(), '.daypass', 'hidden-columns.txt');
+  return env.DAYPASS_HIDDEN_FILE ?? join(env.DAYPASS_HOME ?? join(homedir(), '.daypass'), 'hidden-columns.txt');
 }
 
-/** Same format as `parseHiddenFile` in src/core/hidden.ts. */
-function parseHiddenFile(text) {
-  const hidden = [];
-  const allow = [];
-  for (const raw of text.split('\n')) {
-    const line = raw.replace(/#.*/, '').trim();
-    if (!line) continue;
-    if (line.startsWith('!')) allow.push(line.slice(1).trim());
-    else hidden.push(line);
+export function hookDisabled(env) {
+  const v = (env.DAYPASS_PII_HOOK ?? '').trim().toLowerCase();
+  return v === 'off' || v === 'false' || v === '0';
+}
+
+// --- tokenizer ---------------------------------------------------------------------------
+
+const isDigit = (c) => c >= 48 && c <= 57;
+const isIdentStart = (c) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c >= 128;
+const isIdentPart = (c) => isIdentStart(c) || isDigit(c) || c === 36;
+const isSpace = (c) => c === 32 || (c >= 9 && c <= 13);
+const NUMBER = /0[xX][0-9A-Fa-f_]+|0[oO][0-7_]+|0[bB][01_]+|[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9]+)?|\.[0-9][0-9_]*(?:[eE][+-]?[0-9]+)?/y;
+const DOLLAR_TAG = /\$(?:[A-Za-z_\u0080-￿][A-Za-z0-9_\u0080-￿]*)?\$/y;
+const UESCAPE = /uescape/iy;
+const UESCAPE_CHAR = /'([^'])'/y;
+
+/** Index of the next character that is not whitespace or inside a comment. */
+function skipSpace(sql, i) {
+  const n = sql.length;
+  for (;;) {
+    while (i < n && isSpace(sql.charCodeAt(i))) i++;
+    if (sql[i] === '-' && sql[i + 1] === '-') {
+      const j = sql.indexOf('\n', i);
+      i = j < 0 ? n : j + 1;
+    } else if (sql[i] === '/' && sql[i + 1] === '*') {
+      i = skipBlockComment(sql, i);
+    } else return i;
   }
-  return { hidden, allow };
 }
 
-/** String literals (with '' escapes), -- comments and block comments become spaces. */
-function stripLiteralsAndComments(sql) {
-  return sql.replace(/'(?:[^']|'')*'|--[^\n]*|\/\*[\s\S]*?\*\//g, ' ');
-}
-
-/** alias -> table and table -> table for every `FROM x [AS] y` / `JOIN x [AS] y`. */
-function tableAliases(text) {
-  const map = new Map();
-  const re = /\b(?:from|join)\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\s+as)?(?:\s+([A-Za-z_][A-Za-z0-9_]*))?/gi;
-  for (const m of text.matchAll(re)) {
-    const table = m[1].split('.').pop();
-    map.set(table.toLowerCase(), table);
-    if (m[2] && !NOT_ALIAS.has(m[2].toLowerCase())) map.set(m[2].toLowerCase(), table);
+/** Index just past a nested `/* ... *\/` comment starting at `i`. Unterminated: end of input. */
+function skipBlockComment(sql, i) {
+  const n = sql.length;
+  let depth = 1;
+  i += 2;
+  while (i < n && depth > 0) {
+    if (sql[i] === '/' && sql[i + 1] === '*') { depth++; i += 2; }
+    else if (sql[i] === '*' && sql[i + 1] === '/') { depth--; i += 2; }
+    else i++;
   }
-  return map;
+  return i;
 }
 
-/** Every identifier with the qualifier that precedes it (`p.email` -> { name: 'email', qualifier: 'p' }). */
-function identifiers(text) {
-  const out = [];
-  const re = /(?<![A-Za-z0-9_.])[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/g;
-  for (const m of text.matchAll(re)) {
-    const parts = m[0].split('.');
-    out.push({ name: parts[parts.length - 1], qualifier: parts.length > 1 ? parts[parts.length - 2] : null });
+/** Index just past the closing `q`, treating `qq` as an escaped quote. Unterminated: end of input. */
+function readQuoted(sql, start, q) {
+  let i = start + 1;
+  for (;;) {
+    const j = sql.indexOf(q, i);
+    if (j < 0) return sql.length;
+    if (sql[j + 1] === q) { i = j + 2; continue; }
+    return j + 1;
+  }
+}
+
+/** `E'...'`: backslash escapes anything (including `'` and `\`), `''` is still a quote. */
+function readEscapeString(sql, start) {
+  let i = start + 1;
+  const n = sql.length;
+  while (i < n) {
+    const c = sql[i];
+    if (c === '\\') { i += 2; continue; }
+    if (c === "'") {
+      if (sql[i + 1] === "'") { i += 2; continue; }
+      return i + 1;
+    }
+    i++;
+  }
+  return n;
+}
+
+/** Postgres folds unquoted names by lower-casing A-Z only (U+212A KELVIN SIGN stays as it is). */
+export function asciiLower(s) {
+  return s.replace(/[A-Z]+/g, (m) => m.toLowerCase());
+}
+
+/** NAMEDATALEN - 1: Postgres truncates longer identifiers, at a character boundary, before resolving them. */
+const MAX_IDENT_BYTES = 63;
+export function truncateIdent(s) {
+  if (s.length <= 15 || Buffer.byteLength(s, 'utf8') <= MAX_IDENT_BYTES) return s;
+  let out = '';
+  let bytes = 0;
+  for (const ch of s) {
+    const b = Buffer.byteLength(ch, 'utf8');
+    if (bytes + b > MAX_IDENT_BYTES) break;
+    out += ch;
+    bytes += b;
   }
   return out;
 }
 
-const HIDDEN_DOCS = 'https://github.com/Sajal0208/daypass/blob/main/docs/hidden-columns.md';
+/** Body of a `"..."` identifier with `""` collapsed. */
+function unquoteIdent(raw) {
+  return raw.slice(1, -1).replace(/""/g, '"');
+}
+
+/** `U&"..."` body: `\XXXX`, `\+XXXXXX` and `\\` with the given escape character. */
+function decodeUnicodeIdent(body, esc) {
+  const e = esc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`${e}${e}|${e}\\+([0-9A-Fa-f]{6})|${e}([0-9A-Fa-f]{4})`, 'g');
+  return body.replace(re, (m, six, four) => {
+    if (six !== undefined) return String.fromCodePoint(parseInt(six, 16));
+    if (four !== undefined) return String.fromCharCode(parseInt(four, 16));
+    return esc;
+  });
+}
 
 /**
- * Deny reasons are relayed to the human by the model ("Tell the user: ..."); they are never
- * phrased as an instruction to the model itself.
+ * Splits SQL into tokens. Strings and comments carry no content (`value: ''`): the guard never
+ * looks inside a literal. Identifiers carry the decoded name, `quoted`, and `fold` (the name
+ * Postgres resolves: lower-cased when unquoted, as written when quoted).
+ *
+ * @param {string} sql
+ * @returns {Array<{type: 'ident'|'string'|'number'|'param'|'punct'|'op', value: string, quoted?: boolean, fold?: string, ambiguous?: boolean, start: number, end: number}>}
+ */
+export function tokenize(sql) {
+  const toks = [];
+  const n = sql.length;
+  let i = 0;
+  const push = (type, value, start, end, extra) => toks.push({ type, value, start, end, ...extra });
+  const ident = (raw, quoted, start, end) => {
+    const value = truncateIdent(raw);
+    push('ident', value, start, end, { quoted, fold: quoted ? value : asciiLower(value) });
+  };
+  while (i < n) {
+    const c = sql.charCodeAt(i);
+    const ch = sql[i];
+    if (isSpace(c)) { i++; continue; }
+    if (ch === '-' && sql[i + 1] === '-') {
+      const j = sql.indexOf('\n', i);
+      i = j < 0 ? n : j + 1;
+      continue;
+    }
+    if (ch === '/' && sql[i + 1] === '*') {
+      i = skipBlockComment(sql, i);
+      continue;
+    }
+    if (ch === "'") {
+      const end = readQuoted(sql, i, "'");
+      // With standard_conforming_strings off, Postgres reads a backslash in '...' as an escape,
+      // so the literal can end somewhere else and hide (or expose) the text after it.
+      push('string', '', i, end, readEscapeString(sql, i) !== end ? { ambiguous: true } : undefined);
+      i = end;
+      continue;
+    }
+    if ((ch === 'E' || ch === 'e') && sql[i + 1] === "'") {
+      const end = readEscapeString(sql, i + 1);
+      push('string', '', i, end);
+      i = end;
+      continue;
+    }
+    if ((ch === 'B' || ch === 'b' || ch === 'X' || ch === 'x' || ch === 'N' || ch === 'n') && sql[i + 1] === "'") {
+      const end = readQuoted(sql, i + 1, "'");
+      // N'...' is a plain string with a national-character tag: the same backslash ambiguity
+      const national = ch === 'N' || ch === 'n';
+      push('string', '', i, end, national && readEscapeString(sql, i + 1) !== end ? { ambiguous: true } : undefined);
+      i = end;
+      continue;
+    }
+    if ((ch === 'U' || ch === 'u') && sql[i + 1] === '&' && (sql[i + 2] === "'" || sql[i + 2] === '"')) {
+      const q = sql[i + 2];
+      const close = readQuoted(sql, i + 2, q);
+      if (q === "'") {
+        push('string', '', i, close);
+        i = close;
+        continue;
+      }
+      let esc = '\\';
+      let end = close;
+      // `UESCAPE 'c'` may follow after whitespace and comments (Postgres 13+ reads it as the next token).
+      UESCAPE.lastIndex = skipSpace(sql, close);
+      if (UESCAPE.exec(sql)) {
+        UESCAPE_CHAR.lastIndex = skipSpace(sql, UESCAPE.lastIndex);
+        const m = UESCAPE_CHAR.exec(sql);
+        if (m) { esc = m[1]; end = UESCAPE_CHAR.lastIndex; }
+      }
+      ident(decodeUnicodeIdent(unquoteIdent(sql.slice(i + 2, close)), esc), true, i, end);
+      i = end;
+      continue;
+    }
+    if (ch === '"') {
+      const end = readQuoted(sql, i, '"');
+      ident(unquoteIdent(sql.slice(i, end)), true, i, end);
+      i = end;
+      continue;
+    }
+    if (ch === '$') {
+      DOLLAR_TAG.lastIndex = i;
+      const m = DOLLAR_TAG.exec(sql);
+      if (m) {
+        const tag = m[0];
+        const close = sql.indexOf(tag, i + tag.length);
+        const end = close < 0 ? n : close + tag.length;
+        push('string', '', i, end);
+        i = end;
+        continue;
+      }
+      if (isDigit(sql.charCodeAt(i + 1))) {
+        let j = i + 1;
+        while (j < n && isDigit(sql.charCodeAt(j))) j++;
+        push('param', sql.slice(i, j), i, j);
+        i = j;
+        continue;
+      }
+      push('op', '$', i, i + 1);
+      i++;
+      continue;
+    }
+    if (isDigit(c) || (ch === '.' && isDigit(sql.charCodeAt(i + 1)))) {
+      NUMBER.lastIndex = i;
+      const m = NUMBER.exec(sql);
+      push('number', m[0], i, NUMBER.lastIndex);
+      i = NUMBER.lastIndex;
+      continue;
+    }
+    if (isIdentStart(c)) {
+      let j = i + 1;
+      while (j < n && isIdentPart(sql.charCodeAt(j))) j++;
+      ident(sql.slice(i, j), false, i, j);
+      i = j;
+      continue;
+    }
+    if (ch === ':' && sql[i + 1] === ':') {
+      push('op', '::', i, i + 2);
+      i += 2;
+      continue;
+    }
+    if ('(),.;[]'.includes(ch)) {
+      push('punct', ch, i, i + 1);
+      i++;
+      continue;
+    }
+    push('op', ch, i, i + 1);
+    i++;
+  }
+  return toks;
+}
+
+// --- hidden list -------------------------------------------------------------------------
+
+/** `#` starts a comment unless it is inside a double-quoted identifier. */
+function stripListComment(line) {
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '"') inQuote = !inQuote;
+    else if (line[i] === '#' && !inQuote) return line.slice(0, i);
+  }
+  return line;
+}
+
+/** `[schema.]table.column`, each part bare or `"..."` with `""` escapes. Returns the decoded parts. */
+function parseEntry(entry) {
+  const parts = [];
+  let i = 0;
+  while (i < entry.length) {
+    if (entry[i] === '"') {
+      const end = readQuoted(entry, i, '"');
+      parts.push(unquoteIdent(entry.slice(i, end)));
+      i = end;
+    } else {
+      let j = entry.indexOf('.', i);
+      if (j < 0) j = entry.length;
+      parts.push(entry.slice(i, j).trim());
+      i = j;
+    }
+    if (entry[i] === '.') i++;
+  }
+  return parts.filter((p) => p !== '').map(truncateIdent);
+}
+
+/** Same line grammar as `parseHiddenFile` in src/core/hidden.ts, with quoted and schema-qualified entries. */
+export function parseHiddenFile(text) {
+  const hidden = [];
+  const allow = [];
+  for (const raw of text.split('\n')) {
+    const line = stripListComment(raw).trim();
+    if (!line) continue;
+    if (line.startsWith('!')) allow.push(parseEntry(line.slice(1).trim()));
+    else hidden.push(parseEntry(line));
+  }
+  return { hidden, allow };
+}
+
+function coverage(text) {
+  const { hidden, allow } = parseHiddenFile(text);
+  const columns = new Set();
+  const full = new Set();
+  for (const parts of [...hidden, ...allow]) {
+    if (!parts.length) continue;
+    columns.add(asciiLower(parts[parts.length - 1]));
+    full.add(asciiLower(parts.join('.')));
+  }
+  return { columns, full };
+}
+
+// --- analysis ----------------------------------------------------------------------------
+
+const isKeyword = (t, word) => t !== undefined && t.type === 'ident' && !t.quoted && (word === undefined ? KEYWORDS.has(t.fold) : t.fold === word);
+const isPunct = (t, ch) => t !== undefined && t.type === 'punct' && t.value === ch;
+/** A token that ends a value: a bare name right after it is a column alias, not a whole-row reference. */
+function isOperand(t) {
+  if (t === undefined) return false;
+  if (t.type === 'number' || t.type === 'string' || t.type === 'param') return true;
+  if (t.type === 'punct') return t.value === ')' || t.value === ']';
+  if (t.type === 'ident') return t.quoted || !KEYWORDS.has(t.fold) || OPERAND_KEYWORDS.has(t.fold);
+  return false;
+}
+
+/**
+ * Matching parentheses and brackets in one pass: `match[i]` is the partner of a `(` `)` `[` `]`
+ * at `i` (an unclosed opener matches the last token), `parent[i]` the innermost `(` around
+ * token `i` (-1 at top level).
+ */
+function parens(toks) {
+  const match = new Int32Array(toks.length).fill(-1);
+  const parent = new Int32Array(toks.length).fill(-1);
+  const stack = [];
+  const brackets = [];
+  for (let k = 0; k < toks.length; k++) {
+    parent[k] = stack.length ? stack[stack.length - 1] : -1;
+    if (isPunct(toks[k], '(')) stack.push(k);
+    else if (isPunct(toks[k], '[')) brackets.push(k);
+    else if (isPunct(toks[k], ')') && stack.length) {
+      const o = stack.pop();
+      match[o] = k;
+      match[k] = o;
+    } else if (isPunct(toks[k], ']') && brackets.length) {
+      const o = brackets.pop();
+      match[o] = k;
+      match[k] = o;
+    }
+  }
+  for (const o of [...stack, ...brackets]) match[o] = toks.length - 1;
+  return { match, parent };
+}
+
+/**
+ * Whether the token at `i` ends a value, so a bare name after it is a column alias. A `)` does
+ * not when it closes `OPERATOR(...)` (an operator) or `DISTINCT ON (...)` (the select list
+ * starts after it).
+ */
+function endsValue(toks, match, i) {
+  const t = toks[i];
+  if (!isOperand(t)) return false;
+  if (isPunct(t, ')') && match[i] >= 0) {
+    const o = match[i];
+    if (toks[o - 1]?.type === 'ident' && !toks[o - 1].quoted && toks[o - 1].fold === 'operator') return false;
+    if (isKeyword(toks[o - 1], 'on') && isKeyword(toks[o - 2], 'distinct')) return false;
+  }
+  return true;
+}
+
+/** Deeper FROM nesting than this is treated as table-backed without looking further. */
+const MAX_FROM_DEPTH = 64;
+
+/**
+ * Every FROM / JOIN item, CTE names and their scope. `aliases` maps a folded name to its item:
+ * `table` is the table's name as written and `backed` says whether a whole-row reference to it
+ * could expose table columns (false for CTEs, subqueries and set-returning functions, whose own
+ * select lists are checked on their own). A name is never downgraded from backed to not backed,
+ * whatever scope the second declaration is in. `declared` holds the token indexes of the
+ * declarations; `renamed` lists table-backed items with a column alias list, `t(a, b)`.
+ */
+function fromItems(toks, match, parent) {
+  const aliases = new Map();
+  const declared = new Set();
+  const names = new Set(); // table and CTE name tokens: not column reads
+  const renamed = [];
+  const close = (o) => (match[o] >= 0 ? match[o] : toks.length - 1);
+  const scopeEnd = (k) => (parent[k] >= 0 ? close(parent[k]) : toks.length);
+  const register = (fold, item) => {
+    const had = aliases.get(fold);
+    if (had === undefined || !had.backed) aliases.set(fold, item);
+  };
+
+  // CTE names: `with [recursive] name [(cols)] as [not] [materialized] (...) [, name ...]`.
+  // A CTE is visible from its WITH to the end of the enclosing parentheses.
+  const ctes = new Map();
+  for (let k = 0; k < toks.length; k++) {
+    if (!isKeyword(toks[k], 'with')) continue;
+    let j = k + 1;
+    if (isKeyword(toks[j], 'recursive')) j++;
+    const end = scopeEnd(k);
+    for (;;) {
+      const nm = toks[j];
+      if (nm === undefined || nm.type !== 'ident' || (!nm.quoted && KEYWORDS.has(nm.fold))) break;
+      let p = j + 1;
+      if (isPunct(toks[p], '(')) p = close(p) + 1;
+      if (!isKeyword(toks[p], 'as')) break;
+      p++;
+      if (isKeyword(toks[p], 'not')) p++;
+      if (isKeyword(toks[p], 'materialized')) p++;
+      if (!isPunct(toks[p], '(')) break;
+      // visible after its own body (later siblings and the main query), not inside it or in
+      // earlier siblings; a WITH RECURSIVE self-reference is therefore treated as the table
+      const body = close(p);
+      if (!ctes.has(nm.fold)) ctes.set(nm.fold, []);
+      ctes.get(nm.fold).push([body, end]);
+      declared.add(j);
+      names.add(j);
+      register(nm.fold, { table: nm.value, backed: false });
+      p = body + 1;
+      if (!isPunct(toks[p], ',')) break; // SEARCH / CYCLE: later names are treated as tables (safe)
+      j = p + 1;
+    }
+  }
+  const isCte = (fold, k) => {
+    const ranges = ctes.get(fold) ?? [];
+    return ranges.length <= 64 && ranges.some(([s, e]) => k > s && k <= e); // many same-named CTEs: a table (safe)
+  };
+
+  /** One FROM item at `j`: returns the index after it and its alias, or null when there is none. */
+  function item(j, end, depth) {
+    while (isKeyword(toks[j], 'only') || isKeyword(toks[j], 'lateral')) j++;
+    const t = toks[j];
+    if (t === undefined || j >= end) return null;
+    let entry;
+    if (isPunct(t, '(')) {
+      const c = close(j);
+      const first = toks[j + 1];
+      if (first !== undefined && first.type === 'ident' && !first.quoted && SUBQUERY_START.has(first.fold)) {
+        entry = { table: null, backed: false };
+      } else if (depth >= MAX_FROM_DEPTH) {
+        entry = { table: '(join)', backed: true };
+      } else {
+        // `(a x join b y)`: a parenthesised join, parsed as its own FROM list
+        const inner = fromList(j + 1, c, depth + 1);
+        entry = { table: inner.table ?? '(join)', backed: inner.backed };
+      }
+      j = c + 1;
+    } else if (t.type === 'ident' && !(!t.quoted && KEYWORDS.has(t.fold))) {
+      const parts = [j];
+      j++;
+      while (isPunct(toks[j], '.') && toks[j + 1]?.type === 'ident') { parts.push(j + 1); j += 2; }
+      if (isPunct(toks[j], '(')) {
+        // set-returning function: `from generate_series(1, 3) g`
+        j = close(j) + 1;
+        if (isKeyword(toks[j], 'with') && toks[j + 1]?.fold === 'ordinality') j += 2;
+        entry = { table: null, backed: false };
+      } else {
+        const name = toks[parts[parts.length - 1]];
+        // a schema-qualified name is always a table, never a CTE
+        const backed = parts.length > 1 || !isCte(name.fold, parts[0]);
+        entry = { table: name.value, backed };
+        for (const p of parts) { declared.add(p); names.add(p); }
+        register(name.fold, entry);
+        if (toks[j]?.type === 'op' && toks[j].value === '*') j++; // `from leads *` (inheritance)
+      }
+    } else {
+      return null;
+    }
+    if (isKeyword(toks[j], 'as')) j++;
+    const alias = toks[j];
+    if (alias !== undefined && j < end && alias.type === 'ident' && !(!alias.quoted && NOT_ALIAS.has(alias.fold))) {
+      declared.add(j);
+      register(alias.fold, entry);
+      j++;
+    }
+    if (isPunct(toks[j], '(') && j < end) {
+      // `alias(a, b)` renames columns by position; `as (a int)` is a function's column definition list
+      if (entry.backed) renamed.push({ alias: alias?.value ?? entry.table, table: entry.table });
+      j = close(j) + 1;
+    }
+    return { next: j, entry };
+  }
+
+  /** A comma- and JOIN-separated list of items from `j` up to `end` or a clause keyword. */
+  function fromList(j, end, depth) {
+    let backed = false;
+    let table = null;
+    for (;;) {
+      const r = item(j, end, depth);
+      if (r !== null) {
+        backed ||= r.entry.backed;
+        table ??= r.entry.backed ? r.entry.table : null;
+        j = r.next;
+      }
+      // An item it cannot read is skipped, not the end of the list: scan on to the next `,` / JOIN.
+      let more = false;
+      while (j < end && j < toks.length) {
+        const t = toks[j];
+        if (isPunct(t, '(') || isPunct(t, '[')) { j = close(j) + 1; continue; }
+        if (isPunct(t, ',') || isKeyword(t, 'join')) { j++; more = true; break; }
+        if (isPunct(t, ';') || isPunct(t, ')') || (isKeyword(t) && FROM_END.has(t.fold))) break;
+        // the next FROM starts its own list (keeps this linear); `is [not] distinct from` does not
+        if (isKeyword(t, 'from') && !isKeyword(toks[j - 1], 'distinct')) break;
+        j++; // join type words, ON / USING conditions, TABLESAMPLE ...
+      }
+      if (!more) break;
+    }
+    return { backed, table };
+  }
+
+  for (let k = 0; k < toks.length; k++) {
+    if (!isKeyword(toks[k], 'from')) continue;
+    const p = parent[k];
+    if (p >= 1 && toks[p - 1].type === 'ident' && FROM_IN_ARGS.has(toks[p - 1].fold)) continue; // `extract(year from x)`
+    if (isKeyword(toks[k - 1], 'distinct') && (isKeyword(toks[k - 2], 'is') || isKeyword(toks[k - 2], 'not'))) continue; // `is distinct from`
+    fromList(k + 1, scopeEnd(k), 0);
+  }
+  return { aliases, declared, names, renamed };
+}
+
+/**
+ * A name that labels an output column rather than reading one: right after AS (`count(*) as
+ * emails_sent`, also the type in `cast(x as t)`), or an implicit alias right after a literal or
+ * a closing paren/bracket and right before `,` / FROM / `)` / the end (`count(*) emails_sent,`).
+ * A name after another name (`id phone`, `at time zone phone`) is not skipped: it may be a
+ * column read, so it is checked.
+ */
+function isOutputAlias(toks, match, k) {
+  const next = toks[k + 1];
+  if (isPunct(next, '.') || isPunct(next, '(')) return false;
+  if (isKeyword(toks[k - 1], 'as')) return true;
+  const prev = toks[k - 1];
+  const literalOrClose = prev !== undefined && (prev.type === 'number' || prev.type === 'string' || prev.type === 'param' || isPunct(prev, ')') || isPunct(prev, ']'));
+  if (!literalOrClose || !endsValue(toks, match, k - 1)) return false;
+  return next === undefined || isPunct(next, ',') || isPunct(next, ')') || isPunct(next, ';') || isKeyword(next, 'from');
+}
+
+const HIDDEN_DOCS = 'https://github.com/Sajal0208/daypass/blob/main/docs/hidden-columns.md';
+const PREFIX = 'Daypass PII guard: ';
+
+/**
+ * Deny reasons for a list problem are relayed to the human by the model ("Tell the user: ...");
+ * structural reasons (`SELECT *`, whole rows, SQL-from-string functions) tell the model how to
+ * rewrite the statement. None is phrased as an instruction that widens access.
  *
  * @param {string} sql
  * @param {string | null | { error: string }} hiddenFile  contents of the list; null when the
@@ -114,63 +686,154 @@ const HIDDEN_DOCS = 'https://github.com/Sajal0208/daypass/blob/main/docs/hidden-
  * @returns {{ allow: true } | { allow: false, reason: string }}
  */
 export function decide(sql, hiddenFile, env) {
-  if (env.DAYPASS_PII_HOOK === 'off') return { allow: true };
+  if (hookDisabled(env)) return { allow: true };
   const path = hiddenFilePath(env);
-  const text = stripLiteralsAndComments(sql).replace(/"/g, '');
-  const aliases = tableAliases(text);
-  for (const { name, qualifier } of identifiers(text)) {
-    if (KEYWORDS.has(name.toLowerCase()) || !looksSensitive(name)) continue;
+  const toks = tokenize(sql);
+  const { match, parent } = parens(toks);
+  const { aliases, declared, names, renamed } = fromItems(toks, match, parent);
+  const deny = (reason) => ({ allow: false, reason: PREFIX + reason });
+
+  // 0. A '...' literal that ends elsewhere when standard_conforming_strings is off.
+  if (toks.some((t) => t.ambiguous)) {
+    return deny(
+      "a '...' literal contains a backslash before a quote, which Postgres reads differently when " +
+        "standard_conforming_strings is off, so the guard cannot tell where it ends. Double the quote ('') or use E'...'.",
+    );
+  }
+  // 1. Functions that run SQL from a string or return whole rows.
+  for (let k = 0; k < toks.length; k++) {
+    const t = toks[k];
+    if (t.type === 'ident' && UNINSPECTABLE.has(t.value.toLowerCase()) && isPunct(toks[k + 1], '(')) {
+      return deny(
+        `${t.value}() executes SQL from a string / returns whole rows, which the guard cannot inspect. ` +
+          'Use a plain SELECT that names its columns instead.',
+      );
+    }
+  }
+  // 1b. Planner statistics views hold sample values of every readable column.
+  for (const t of toks) {
+    if (t.type === 'ident' && STATS.has(t.fold)) {
+      return deny(
+        `${t.value} holds planner statistics with sample values (most_common_vals, histogram_bounds) of readable columns, which the guard ` +
+          'cannot check against the hidden list; query the table itself with named columns.',
+      );
+    }
+  }
+  // 2. `*` / `alias.*` targets other than count(*), and `TABLE x`.
+  for (let k = 0; k < toks.length; k++) {
+    const t = toks[k];
+    if (isKeyword(t, 'table')) {
+      return deny('TABLE x returns every column, like SELECT *; name the columns in a SELECT instead.');
+    }
+    if (t.type !== 'op' || t.value !== '*') continue;
+    const prev = toks[k - 1];
+    if (endsValue(toks, match, k - 1)) continue; // multiplication, or `from leads *` (inheritance)
+    if (isPunct(prev, '(') && toks[k - 2]?.type === 'ident' && toks[k - 2].fold === 'count' && isPunct(toks[k + 1], ')')) continue;
+    // count(o.*) is a row count
+    if (isPunct(prev, '.') && toks[k - 2]?.type === 'ident' && isPunct(toks[k - 3], '(') && toks[k - 4]?.type === 'ident' && toks[k - 4].fold === 'count' && isPunct(toks[k + 1], ')')) continue;
+    return deny(
+      'SELECT * can return columns the hidden list does not cover; name the columns ' +
+        '(describe_table lists the ones this role may read; count(*) is fine).',
+    );
+  }
+  // 2b. Column alias lists on a table rename its columns by position, hiding their names.
+  if (renamed.length) {
+    const { alias, table } = renamed[0];
+    return deny(
+      `the column alias list on ${alias} renames the columns of ${table} by position, which hides their names ` +
+        `from the guard; select the columns by name and alias each one (col AS name).`,
+    );
+  }
+  // 3. Whole-row references to a FROM table or its alias.
+  const wholeRow = (t, item) =>
+    deny(
+      `"${t.value}" is used as a whole row of ${item.table}, which can return columns the hidden list does not cover; ` +
+        `name the columns (${t.value}.column). If "${t.value}" is a column of the same name, qualify it as <alias>.${t.value}.`,
+    );
+  for (let k = 0; k < toks.length; k++) {
+    const t = toks[k];
+    if (t.type !== 'ident' || declared.has(k)) continue;
+    const item = aliases.get(t.fold);
+    if (item === undefined || !item.backed) continue;
+    const prev = toks[k - 1];
+    const next = toks[k + 1];
+    // `l.to_jsonb` is attribute notation for to_jsonb(l)
+    const attr = toks[k + 2];
+    if (isPunct(next, '.') && attr?.type === 'ident' && WHOLE_ROW_ATTR.has(attr.fold) && !isPunct(toks[k + 3], '(')) {
+      return wholeRow(t, item);
+    }
+    if (isPunct(prev, '.') || isPunct(next, '.')) continue; // qualifier or qualified name
+    if (isKeyword(prev, 'as')) continue; // `count(*) as users`
+    if (endsValue(toks, match, k - 1)) continue; // `count(*) users`: an implicit column alias
+    return wholeRow(t, item);
+  }
+  // 4. Every identifier against the name heuristic and the list.
+  let cover = null;
+  for (let k = 0; k < toks.length; k++) {
+    const t = toks[k];
+    if (t.type !== 'ident') continue;
+    if (!t.quoted && KEYWORDS.has(t.fold)) continue;
+    if (names.has(k)) continue; // a table or CTE name in FROM / WITH, not a column
+    if (isOutputAlias(toks, match, k)) continue;
+    // the spelling (camelCase splits into words) and, unquoted, the name Postgres resolves (phonE -> phone)
+    if (!looksSensitive(t.value) && (t.quoted || !looksSensitive(t.fold))) continue;
     if (hiddenFile === null) {
-      return {
-        allow: false,
-        reason:
-          `Daypass PII guard: no hidden-columns list at ${path}. Tell the user: generate one with ` +
+      return deny(
+        `no hidden-columns list at ${path}. Tell the user: generate one with ` +
           `daypass hidden suggest --live <target> > ${path} (${HIDDEN_DOCS}), or set DAYPASS_PII_HOOK=off for this session.`,
-      };
+      );
     }
     if (typeof hiddenFile !== 'string') {
-      return {
-        allow: false,
-        reason:
-          `Daypass PII guard: cannot read hidden-columns list at ${path}: ${hiddenFile.error}. ` +
+      return deny(
+        `cannot read hidden-columns list at ${path}: ${hiddenFile.error}. ` +
           `Tell the user: fix or remove that file, or set DAYPASS_PII_HOOK=off for this session.`,
-      };
+      );
     }
-    const { hidden, allow } = parseHiddenFile(hiddenFile);
-    const covered = new Set([...hidden, ...allow].map((e) => e.split('.').pop().toLowerCase()));
-    if (covered.has(name.toLowerCase())) continue;
-    const table = qualifier ? aliases.get(qualifier.toLowerCase()) ?? qualifier : '<table>';
-    return {
-      allow: false,
-      reason:
-        `Daypass PII guard: "${name}" looks like personal or secret data and is not in the hidden-columns list (${path}). ` +
-        `Tell the user: if it must stay visible, add "!${table}.${name}" after review, or set DAYPASS_PII_HOOK=off for this session; ` +
-        `otherwise add "${table}.${name}" and have the database owner re-run ` +
+    cover ??= coverage(hiddenFile);
+    if (cover.columns.has(asciiLower(t.value))) continue;
+    // qualified `a.b.c`: also accept an exact schema.table.column entry
+    const chain = [t.value];
+    // at most catalog.schema.table.column, so a long a.b.c... chain stays linear
+    for (let j = k - 1; chain.length < 4 && isPunct(toks[j], '.') && toks[j - 1]?.type === 'ident'; j -= 2) chain.unshift(toks[j - 1].value);
+    if (chain.length > 1 && cover.full.has(asciiLower(chain.join('.')))) continue;
+    const qualifier = chain.length > 1 ? toks[k - 2] : undefined;
+    const table = qualifier ? aliases.get(qualifier.fold)?.table ?? qualifier.value : '<table>';
+    return deny(
+      `"${t.value}" looks like personal or secret data and is not in the hidden-columns list (${path}). ` +
+        `Tell the user: if it must stay visible, add "!${table}.${t.value}" after review, or set DAYPASS_PII_HOOK=off for this session; ` +
+        `otherwise add "${table}.${t.value}" and have the database owner re-run ` +
         `daypass sql --hide-file ${path} | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1.`,
-    };
+    );
   }
   return { allow: true };
 }
 
 /**
  * Exit codes follow the Claude Code hook contract: 0 = no decision (the call goes ahead),
- * 2 = block with the reason on stderr, anything else = non-blocking error whose first stderr
- * line shows in the transcript. Unparsable stdin is not a tool call we understand, so it is
- * let through silently; a tool input with no `sql` is let through with a visible note, so a
- * renamed argument does not turn the guard off unnoticed.
+ * 2 = block with the reason on stderr. The hook fails closed: stdin that is not the JSON of a
+ * tool call with a string `sql`, and any error while deciding, exit 2 with a reason, and
+ * hooks.json adds `onFailure: block` for a crash or a timeout the script cannot catch itself.
+ * DAYPASS_PII_HOOK=off (also `false`/`0`, any case) is the one way to let everything through.
  */
+function block(reason) {
+  process.stderr.write(PREFIX + reason + '\n');
+  process.exit(2);
+}
+
 function main() {
+  if (hookDisabled(process.env)) return;
   let input;
   try {
     input = JSON.parse(readFileSync(0, 'utf8'));
-  } catch {
-    return;
+  } catch (err) {
+    block(`stdin is not the JSON of a tool call (${err?.message ?? err}); the query was not checked and is blocked.`);
   }
   const toolInput = input?.tool_input;
-  if (toolInput === null || typeof toolInput !== 'object') return;
+  if (toolInput === null || typeof toolInput !== 'object') {
+    block('the tool call has no tool_input object; the query was not checked and is blocked.');
+  }
   if (typeof toolInput.sql !== 'string') {
-    process.stderr.write('Daypass PII guard: no "sql" in tool input, not checked\n');
-    process.exit(1);
+    block('the tool input has no string "sql" field; the query was not checked and is blocked.');
   }
   let hiddenFile;
   try {
@@ -185,4 +848,10 @@ function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    main();
+  } catch (err) {
+    block(`internal error (${err?.stack ?? err}); the query was not checked and is blocked.`);
+  }
+}

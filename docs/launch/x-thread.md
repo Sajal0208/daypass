@@ -1,4 +1,4 @@
-# X thread (6 posts)
+# X thread (7 posts)
 
 Character counts are for the text inside each block, without the trailing newline, with
 every URL (including the `<SITE_URL>` placeholder) counted as 23 characters, which is what
@@ -16,52 +16,58 @@ Read-only. PII columns hidden by the database. Every query logged. The door shut
 Open source, MIT. Thread. [GIF]
 ```
 
-## 2 (layer: the role) — 276 chars
+## 2 (layer: the role) — 250 chars
 
 ```
-The wall is the DB role, not the client.
+The wall is the DB role's grants, not the client.
 
-daypass_ro: default_transaction_read_only, 10 s statement timeout, 1 s lock timeout, 5 connections, SELECT on visible columns only.
+daypass_ro: SELECT table by table on visible columns, no write privilege, no default privileges.
 
 A column REVOKE does nothing while the role holds table-level SELECT. Our first draft got that wrong.
 ```
 
-## 3 (layer: credentials) — 272 chars
+## 3 (the second wrong draft) — 255 chars
+
+```
+Then a review after 0.1.0: hidden columns leaked through views, partitions and SECURITY DEFINER functions, and the role could reset its own timeouts.
+
+The next release withholds those views, fails setup on definer functions, and doctor checks the catalog.
+```
+
+## 4 (layer: credentials) — 267 chars
 
 ```
 No stored password.
 
-On RDS the role logs in with a 15-minute IAM token minted from your own AWS login. TLS is always verified and RDS targets pin the AWS RDS CA.
+On RDS the role logs in with a 15-minute IAM token minted from your own AWS login. TLS is always verified; RDS hosts pin the AWS RDS CA.
 
 Lose AWS access, lose Daypass access. With per-person IAM identities, nothing to rotate when someone leaves.
 ```
 
-## 4 (layer: the parser) — 264 chars
+## 5 (layer: the parser) — 242 chars
 
 ```
 Before SQL leaves the laptop it goes through Postgres's own parser (libpg-query).
 
-One statement. SELECT or EXPLAIN. No FOR UPDATE, SELECT INTO, EXPLAIN ANALYZE, pg_sleep, dblink, pg_read_file, set_config, nextval.
-
-33 banned functions. 45 tests full of nasty SQL.
+One SELECT or EXPLAIN, in a read-only transaction. No data-modifying CTE, FOR UPDATE, SELECT INTO, EXPLAIN ANALYZE, pg_sleep, dblink, set_config, query_to_xml.
 ```
 
-## 5 (layer: caps and audit) — 236 chars
+## 6 (layer: caps and audit) — 236 chars
 
 ```
-Results are capped: 500 rows, 2 KB per cell, 1 MB total. One query cannot flood the model's context.
+Results are cut in the database: 500 rows, 1 MB. One query cannot flood the model's context or the server.
 
-Every call writes one JSON line to ~/.daypass/audit.jsonl: who (AWS ARN), lease id, reason, SQL, rows, ms, allowed or blocked and why.
+Every query is logged to ~/.daypass/audit.jsonl before it runs and when it ends: who (AWS ARN), lease id, reason, SQL, rows, ms.
 ```
 
-## 6 (link) — 260 chars (each URL counted as 23, as X does)
+## 7 (link) — 221 chars
 
 ```
-On a real production database: 52 hidden columns denied, writes blocked, lease expiry enforced. Postgres only for now.
+Postgres only for now. Known limits are in the threat model, first.
 
 npm install -g daypass
 https://github.com/Sajal0208/daypass
 <SITE_URL>
 
-Find a hole? Email security@vocobase.com, not the issue tracker.
+Find a hole? SECURITY.md has the private reporting route, not the issue tracker.
 ```

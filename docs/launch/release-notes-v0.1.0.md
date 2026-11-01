@@ -1,11 +1,20 @@
 # daypass 0.1.0
 
+> **Superseded; do not deploy 0.1.0.** A security review on 2026-10-30 found that the 0.1.0
+> role setup leaves hidden columns readable through views, materialized views, partitions,
+> inheritance children and `SECURITY DEFINER` functions, lets the role reset its own
+> settings, and that `daypass doctor` cannot detect a misconfigured role. Upgrade to the
+> release after it and re-run the role setup. See `CHANGELOG.md` and
+> [`release-notes-next.md`](release-notes-next.md). The text below is the original 0.1.0
+> release body, with three statements corrected to what 0.1.0 actually does (marked
+> *corrected*).
+
 First release. Temporary, read-only, audited Postgres access for AI coding agents. A human
 opens a lease; Claude Code (or any MCP client) gets `SELECT`-only tools until it expires.
 
 ## What is in it
 
-- `daypass open|status|close|sweep|log|doctor|sql|init|mcp`
+- `daypass open|status|close|sweep|log|doctor|sql|init|mcp|hidden`
 - MCP tools: `daypass_status`, `list_tables`, `describe_table`, `explain`, `query`
 - Postgres only. Auth: AWS RDS IAM tokens (no stored password) or a connection URL /
   password for any other Postgres.
@@ -13,11 +22,12 @@ opens a lease; Claude Code (or any MCP client) gets `SELECT`-only tools until it
   row locks, `SELECT INTO`, `EXPLAIN ANALYZE` and 30+ dangerous functions.
 - Limits: 500 rows, 2 KB per cell, 1 MB per result, 10 s statement timeout, read-only
   session.
-- TLS always verified; RDS targets pin the bundled AWS RDS CA. Audit `who` is the AWS caller
-  ARN for IAM targets.
-- Audit: one JSON line per call in `~/.daypass/audit.jsonl`.
-- Optional: punch the caller's IP into an AWS security group for the lease and remove it
-  after.
+- TLS always verified; IAM (`region`) targets pin the bundled AWS RDS CA (*corrected*: a
+  URL target on an RDS host does not in 0.1.0).
+- Audit: one JSON line per completed call in `~/.daypass/audit.jsonl` (*corrected*: a call
+  killed mid-query leaves no line in 0.1.0).
+- Optional: punch the caller's IP into an AWS security group for the lease; removed on
+  `close`, on the first tool call after expiry, or by `daypass sweep` (*corrected*).
 
 ## Install
 
@@ -48,7 +58,7 @@ daypass hidden suggest --prisma prisma/schema.prisma > hidden-columns.txt   # or
 Then create the role as the database owner:
 
 ```bash
-daypass sql --hide-file hidden-columns.txt | psql "$DATABASE_URL" -v ON_ERROR_STOP=1
+daypass sql --hide-file hidden-columns.txt | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1
 ```
 
 The script creates `daypass_ro` with `SELECT` on everything except the hidden columns,
@@ -89,7 +99,7 @@ Read these before you run it against anything you care about.
 
 ## Reporting a hole
 
-Email security@vocobase.com. Do not open a public issue for anything that lets an agent read a
+See `SECURITY.md` for the private reporting routes (email security@vocobase.com). Do not open a public issue for anything that lets an agent read a
 hidden column, run a write, bypass a lease, escape the timeouts or leak a credential. Reply
 within 3 working days; fix within 14 days for anything that weakens the read-only guarantee.
 See `SECURITY.md`.

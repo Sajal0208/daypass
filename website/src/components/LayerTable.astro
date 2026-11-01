@@ -1,9 +1,12 @@
 ---
-/** The seven layers, as in README.md "Why it is safe". Keep the two in step. */
+/** The eight layers, as in README.md "Why it is safe". Keep the two in step. */
 ---
 
 <table class="layers">
-	<caption>Each layer is enough on its own. All of them run together.</caption>
+	<caption>
+		Each layer is enough for the job it has; all of them run together. The role's grants are the
+		wall. The others are fences: none stops a write by itself.
+	</caption>
 	<thead>
 		<tr><th scope="col">Layer</th><th scope="col">What it does</th></tr>
 	</thead>
@@ -11,9 +14,12 @@
 		<tr>
 			<th scope="row">DB role</th>
 			<td>
-				<code>SELECT</code> on visible columns only. PII and secret columns are hidden at the
-				Postgres level, so <code>SELECT *</code> on those tables fails. <code>default_transaction_read_only</code>, 10 s statement timeout, 1 s lock timeout,
-				5 connections.
+				<code>SELECT</code> on visible columns only, granted table by table, and no write privilege
+				anywhere. PII and secret columns are hidden at the Postgres level, so <code>SELECT *</code> on
+				those tables fails; views that would expose one are not granted. Defaults:
+				<code>default_transaction_read_only</code>, 10 s statement timeout, 1 s lock timeout; 5
+				connections. The role can change its own defaults in a direct session;
+				<code>daypass doctor</code> reports drift.
 			</td>
 		</tr>
 		<tr>
@@ -27,30 +33,42 @@
 			<th scope="row">Real parser</th>
 			<td>
 				Every statement goes through Postgres's own parser (<code>libpg-query</code>). One
-				statement; <code>SELECT</code> or <code>EXPLAIN</code> only; no <code>FOR UPDATE</code>, <code>SELECT INTO</code>, <code>EXPLAIN ANALYZE</code>, <code>pg_sleep</code>, <code>dblink</code>, <code>pg_read_file</code>, <code>set_config</code>, <code>nextval</code>, advisory locks, …
+				statement of at most 256 KiB; <code>SELECT</code> or <code>EXPLAIN</code> only; no data-modifying CTE, <code>FOR UPDATE</code>, <code>SELECT INTO</code>, <code>EXPLAIN ANALYZE</code>, <code>pg_sleep</code>, <code>dblink</code>, <code>pg_read_file</code>, <code>set_config</code>, <code>nextval</code>, advisory locks, <code>query_to_xml</code>, … The block list cannot cover every extension; the role's <code>EXECUTE</code> grants are the boundary there.
+			</td>
+		</tr>
+		<tr>
+			<th scope="row">Read-only transaction</th>
+			<td>
+				Each call runs in <code>BEGIN READ ONLY</code> with a timeout of 10 s or the lease time
+				left, whichever is shorter, and the session is reset afterwards. A call that is cut off is
+				cancelled in the database too.
 			</td>
 		</tr>
 		<tr>
 			<th scope="row">Result caps</th>
-			<td>500 rows, 2 KB per cell, 1 MB per result. The model's context never floods.</td>
+			<td>
+				500 rows and 1 MB per result, cut in the database before the rows are sent; 2000
+				characters per cell; 32 MiB on the wire per call.
+			</td>
 		</tr>
 		<tr>
 			<th scope="row">Audit</th>
 			<td>
-				One JSON line per call in <code>~/.daypass/audit.jsonl</code>: time, caller (AWS ARN
-				for IAM targets), lease id, reason, SQL, rows, ms, allowed/blocked.
+				Two JSON lines per call in <code>~/.daypass/audit.jsonl</code>, one before the query runs
+				and one when it ends: time, caller (AWS ARN for IAM targets), lease id, reason, SQL, rows,
+				ms, error. Refusals get one line with the reason.
 			</td>
 		</tr>
 		<tr>
 			<th scope="row">Network</th>
 			<td>
-				Optional: punch your current IP into the DB security group for the lease, remove it on
-				close or expiry.
+				Optional: punch your current IP into the DB security group for the lease; removed on
+				close, on the first tool call after expiry, or by <code>daypass sweep</code>.
 			</td>
 		</tr>
 		<tr>
 			<th scope="row">TLS</th>
-			<td>Always verified. RDS targets pin the bundled AWS RDS CA.</td>
+			<td>Always verified. RDS targets (IAM, or any <code>*.rds.amazonaws.com</code> host) pin the bundled AWS RDS CA.</td>
 		</tr>
 	</tbody>
 </table>

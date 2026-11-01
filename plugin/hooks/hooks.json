@@ -2,12 +2,14 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^mcp__(plugin_daypass_)?daypass__query$",
+        "matcher": "^mcp__(plugin_daypass_)?daypass__(query|explain)$",
         "hooks": [
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/pii-guard.mjs"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/pii-guard.mjs"],
+            "timeout": 10,
+            "onFailure": "block"
           }
         ]
       }

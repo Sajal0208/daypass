@@ -15,8 +15,9 @@ that touches production or AWS. Secrets never enter the chat.
 - Never ask for, echo, or store a production password or owner URL. The admin exports
   `OWNER_URL` in their own shell; you only reference `"$OWNER_URL"` in commands you print.
   If they paste one anyway: do not use it, do not repeat it, tell them to rotate it, carry on.
-- Do not run `daypass open` for the admin except in step 7, after a yes to that step's own
-  question. A general "go ahead" or "I'm in a hurry" earlier in the chat is not that yes.
+- Never run `daypass open` or `daypass close` yourself, not even for the verification probe in
+  step 7: a lease is the admin's decision and the audit log records it under their identity.
+  Print the line, the admin runs it and tells you when it is open.
 - Non-secret values the admin gave (hostname, instance id, region, account id, group id) may be
   filled in. Where you do not know one, use the placeholders `my-db.abc123.eu-central-1.rds.amazonaws.com`,
   `123456789012`, `sg-xxxxxxxxxxxxxxxxx`, `db-XXXXXXXXXXXXXXXXXXXXXXXXXX`.
@@ -58,8 +59,9 @@ once the target can log in.) Show the file. Explain:
 - The heuristic matches column *names* only (`phone`, `email`, `token`, `secret`, `key`,
   `transcript`, `password`, `address`, `ssn`, `encrypted_*`, `account_number`, `tax_id`,
   `national_id`, ...). It is a draft.
-- Ask the admin to review every table, not just flagged lines: `notes`, `body`, `payload`,
-  `metadata`, `raw` hide PII under neutral names. Hashed secrets stay hidden. Ids, timestamps,
+- Ask the admin to review every table, not just flagged lines: free-text and blob columns
+  (`raw`, `data`, `content`, `comment`) hide PII under names the heuristic does not know;
+  `notes`, `body`, `payload`, `metadata` are flagged, and the admin decides each one. Hashed secrets stay hidden. Ids, timestamps,
   statuses, amounts stay visible; a whole-PII table keeps its primary key visible.
 - A false positive is not deleted but turned into an allow line, `!servers.address  # host IP`,
   so `hidden check` records the decision and stops flagging it. `daypass sql` ignores `!` lines.
@@ -111,8 +113,9 @@ useless; one identity per person.
 ## 6. Doctor
 
 Run `daypass doctor <target>` and read it top to bottom; later checks only run when earlier ones
-pass, and `db login` / `write blocked` need a live lease (expected ✖ `lease` at this point).
-Map each ✖ to the heading of the same name in `docs/troubleshooting.md`:
+pass, and every check from `db login` on needs a live lease (expected ✖ `lease` at this point,
+so the database checks are rerun in step 7). Map each ✖ to the heading of the same name in
+`docs/troubleshooting.md`:
 
 | ✖ line | Usual fix |
 |---|---|
@@ -122,20 +125,33 @@ Map each ✖ to the heading of the same name in `docs/troubleshooting.md`:
 | `aws credentials` | `aws sso login` / `aws configure` for that profile, or set `awsProfile` |
 | `tcp` | empty = nothing listens; `timeout after 5 s` = no security-group rule for this IP: set `securityGroupId` (rule added per lease, so expect ✖ until step 7), or join the VPN/VPC |
 | `db login` | password reset by a setup re-run (step 4); certificate error → `sslCa`; RDS auth error → step 5 |
-| `read-only` / `write blocked` | stop, close the lease, re-run the setup SQL as owner |
+| `read-only` / `role settings` | the session is not read-only or the role's settings (statement timeout, search path, ...) are not what the setup SQL sets: re-run the setup SQL as owner |
+| `write blocked` | the role holds a write privilege on some table (the check reads the grants, it does not try a write): re-run the setup SQL as owner; if it still fails, something granted privileges outside Daypass |
+| `hidden columns` | a column in the hidden list is still readable, or the list and the grants disagree: re-run the setup SQL with the current list, then `daypass hidden check` |
+| `definer functions` | the role can call a `SECURITY DEFINER` function, which would run with its owner's rights and bypass the column grants: the owner revokes `EXECUTE` from the role (or from `PUBLIC`) on it |
 
-## 7. Verification probe (ask first)
+Any other ✖ line: quote it and the fix `docs/troubleshooting.md` gives under that heading. Doctor
+checks are added over time; describe a line you do not know from its detail text rather than
+guessing, and never "fix" a database check by running SQL yourself.
 
-Ask: "Open a 5-minute lease on `<target>` to verify? I will run one denied query and one count."
-Only on an explicit yes:
-1. `daypass open <target> --ttl 5m --reason "setup check"` (add `--no-network` if they are
-   inside the VPC). Then `daypass doctor <target>`: every line should be ✔.
+## 7. Verification probe (the admin opens the lease)
+
+Ask: "Ready to verify with a 5-minute lease on `<target>`? I will run one denied query and one
+count, then you close it." On a yes, print this line for the admin to run in their terminal (add
+`--no-network` when they are inside the VPC) and wait until they say it is open:
+```bash
+daypass open <target> --ttl 5m --reason "setup check"
+```
+Then, with the lease open:
+1. `daypass doctor <target>`: every line should be ✔ now, including the database checks that
+   needed the lease.
 2. `daypass hidden check --file ~/.daypass/hidden-columns.txt --live <target>`; exit 1 lists
    columns missing from the schema or sensitive-but-not-hidden: fix the file, re-run step 4.
 3. Through the MCP tools: `query` with `select <hidden column> from <table> limit 1`, expecting
-   `Query failed after ... ms: permission denied for table <table>`; then `query` with
+   `Query failed after ... ms: permission denied for table <table>` (the plugin's PII guard lets
+   this through because the column is in the hidden list; pick one that is); then `query` with
    `select count(*) from <table>`, expecting a row. Anything else: the role is wrong, stop.
-4. `daypass close`. Report the three results in one line each.
+4. Print `daypass close` for the admin to run. Report the three results in one line each.
 
 ## 8. Hook up Claude Code
 
