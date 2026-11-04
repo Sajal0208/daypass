@@ -151,20 +151,22 @@ program
       throw new Error(`A lease is already open on ${p(`"${targetName}"`)} (${p(existing.id)}, until ${p(existing.expiresAt)}). Run: daypass close ${p(targetName)}`);
     }
     // AWS allows one rule per group/port/CIDR, and closing either lease would revoke it for both.
+    // An expired lease whose rule was not revoked yet still holds it.
     if (opts.network && t.region && t.securityGroupId) {
       const clash = leases.find(
         (o) =>
           o.target !== targetName &&
-          isLeaseLive(o) &&
           o.sgRuleId &&
           o.sgGroupId === t.securityGroupId &&
           o.sgRegion === t.region &&
           (o.sgPort === undefined || o.sgPort === t.port),
       );
       if (clash) {
+        const where = `(${p(t.securityGroupId)} in ${p(t.region)}, port ${t.port})`;
         throw new Error(
-          `Target "${p(targetName)}" needs the same security-group rule as the live lease on "${p(clash.target)}" (${p(t.securityGroupId)} in ${p(t.region)}, port ${t.port}). ` +
-            `Close that one first: daypass close ${p(clash.target)}`,
+          isLeaseLive(clash)
+            ? `Target "${p(targetName)}" needs the same security-group rule as the live lease on "${p(clash.target)}" ${where}. Close that one first: daypass close ${p(clash.target)}`
+            : `Target "${p(targetName)}" needs the same security-group rule ${where}, and the expired lease on "${p(clash.target)}" still holds that rule. Run: daypass close ${p(clash.target)}`,
         );
       }
     }
@@ -188,7 +190,10 @@ program
     if (!(await writeLease(lease, { ifId: existing?.id ?? null }))) {
       throw new Error(`Another "daypass open ${p(targetName)}" ran at the same time. Run: daypass status`);
     }
+    const closedMeanwhile = () =>
+      new Error(`Lease ${p(lease.id)} on "${p(targetName)}" was closed while daypass open was running. Run daypass open again if you still need it.`);
     if (opts.network && t.region && t.securityGroupId) {
+      let gone = false;
       try {
         lease.ip = await myPublicIp();
         // Recorded before the rule exists, so close/cleanup revoke it in this group even if the config changes.
@@ -196,7 +201,11 @@ program
         lease.sgGroupId = t.securityGroupId;
         lease.sgPort = t.port;
         if (t.awsProfile) lease.sgProfile = t.awsProfile;
-        await writeLease(lease);
+        // Only while the lease is still ours: a `daypass close` meanwhile wins, and no rule is made.
+        if (!(await writeLease(lease, { ifId: lease.id }))) {
+          gone = true;
+          throw closedMeanwhile();
+        }
         lease.sgRuleId = await allowIp({
           region: t.region,
           profile: t.awsProfile,
@@ -207,10 +216,16 @@ program
           expiresAt: lease.expiresAt,
         });
       } catch (e: any) {
-        console.error(`Lease ${lease.id} was recorded, but opening the network failed. Run: daypass close ${p(targetName)} (then retry daypass open)`);
+        if (!gone) console.error(`Lease ${lease.id} was recorded, but opening the network failed. Run: daypass close ${p(targetName)} (then retry daypass open)`);
         throw e;
       }
-      await writeLease(lease);
+      // Closed while AWS made the rule: nothing on disk points at the rule any more, so revoke it now.
+      if (!(await writeLease(lease, { ifId: lease.id }))) {
+        await releaseNetwork(lease, raw).catch((e) =>
+          console.warn(`warning: rule ${p(lease.sgRuleId)} was NOT revoked (${p(e.message)}). It expires at ${p(lease.expiresAt)}; then run: daypass sweep ${p(targetName)}`),
+        );
+        throw closedMeanwhile();
+      }
       console.log(`Allowed ${lease.ip} on ${t.securityGroupId} (rule ${lease.sgRuleId})`);
     }
 
@@ -244,7 +259,9 @@ program
     } catch (e: any) {
       if (!(e instanceof LeaseCorruptError)) throw e;
       await clearLease();
-      console.warn('Removed the corrupt lease file. If it held a security-group rule, run: daypass sweep <target>');
+      console.warn(
+        'Removed the corrupt lease file, and with it every lease. Security-group rules those leases held stay until they expire; then run: daypass sweep <target>',
+      );
       return;
     }
     const pick = target === undefined ? leases : leases.filter((l) => l.target === target);
@@ -264,10 +281,20 @@ program
         } else cfg = c;
       }
       if (l.sgRuleId && (recorded || cfg)) await releaseNetwork(l, cfg?.targets[l.target]);
-      await clearLease(l.target);
+      await clearLease(l.target, { ifId: l.id });
       console.log(`Lease ${p(l.id)} closed.`);
     };
-    for (const l of pick) await closeOne(l);
+    // One lease failing (AWS unreachable) must not leave the others open: try every one.
+    let failed = 0;
+    for (const l of pick) {
+      try {
+        await closeOne(l);
+      } catch (e: any) {
+        failed++;
+        console.error(`Lease ${p(l.id)} on "${p(l.target)}" was NOT closed: ${p(e?.message ?? String(e))}`);
+      }
+    }
+    if (failed) throw new Error(`${failed} lease(s) not closed. Fix the cause and run daypass close again.`);
   });
 
 program
@@ -287,8 +314,13 @@ program
       throw e;
     }
     if (l && !isLeaseLive(l)) {
-      await clearLease(targetName);
-      console.log(`Cleared expired local lease ${p(l.id)}.`);
+      if (l.sgRuleId && l.sgGroupId && (l.sgGroupId !== t.securityGroupId || l.sgRegion !== t.region)) {
+        console.warn(
+          `Kept expired lease ${p(l.id)}: its rule ${p(l.sgRuleId)} is in ${p(l.sgGroupId)} (${p(l.sgRegion)}), not in the group this sweep looked at. Run: daypass close ${p(targetName)}`,
+        );
+      } else if (await clearLease(targetName, { ifId: l.id })) {
+        console.log(`Cleared expired local lease ${p(l.id)}.`);
+      }
     }
   });
 

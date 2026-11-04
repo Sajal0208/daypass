@@ -114,6 +114,12 @@ export async function revokeLeaseRule(
   const ruleId = lease.sgRuleId;
   if (!ruleId) return { revoked: false };
   const recorded = !!(lease.sgRegion && lease.sgGroupId);
+  if (!recorded && !t) {
+    return {
+      revoked: false,
+      warning: `security-group rule ${ruleId} was NOT revoked: the lease does not say where it lives and target "${lease.target}" is not in the config. Remove the rule in the AWS console, or add the target back and run: daypass sweep ${lease.target}`,
+    };
+  }
   if (!recorded && (!t?.region || !t.securityGroupId)) {
     return { revoked: false, warning: `security-group rule ${ruleId} was NOT revoked: neither the lease nor target "${lease.target}" names a region and securityGroupId. Run: daypass sweep ${lease.target}` };
   }

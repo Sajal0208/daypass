@@ -25,9 +25,10 @@ const lease = (extra: Record<string, unknown> = {}) => ({ id: 'aaaa1111', target
 const put = (l: object | string) => writeFileSync(LEASE, typeof l === 'string' ? l : JSON.stringify(l), { mode: 0o600 });
 const config = (prod: Record<string, unknown>) =>
   writeFileSync(join(home, 'config.json'), JSON.stringify({ targets: { prod: { host: 'db.invalid', database: 'd', user: 'u', ...prod }, dev: { url: 'postgres://u:p@db.invalid/d?sslmode=disable' } } }), { mode: 0o600 });
-const cli = async (...args: string[]) => {
+const cli = (...args: string[]) => cliWith({}, ...args);
+const cliWith = async (extra: Record<string, string>, ...args: string[]) => {
   try {
-    const r = await promisify(execFile)('node', [CLI, ...args], { env: { ...process.env, ...env, DAYPASS_HOME: home } });
+    const r = await promisify(execFile)('node', [CLI, ...args], { env: { ...process.env, ...env, DAYPASS_HOME: home, ...extra } });
     return { code: 0, ...r };
   } catch (e: any) {
     return { code: e.code as number, stdout: e.stdout as string, stderr: e.stderr as string };
@@ -61,6 +62,7 @@ beforeEach(() => {
   fake.rules.length = 0;
   fake.calls.length = 0;
   fake.revokeDelayMs = 0;
+  fake.authorizeDelayMs = 0;
 });
 
 describe('writeLease', () => {
@@ -334,5 +336,79 @@ describe('sweep only removes rules daypass made', () => {
     const removed = await sg.sweepExpired({ region: 'us-east-1', groupId: 'sg-1' });
     expect(removed.sort()).toEqual(['sgr-expired', 'sgr-expired-nofrac']);
     expect(fake.rules.map((r) => r.id).sort()).toEqual(['sgr-egress', 'sgr-garbage', 'sgr-live', 'sgr-long', 'sgr-note', 'sgr-suffix', 'sgr-upper']);
+  });
+});
+
+describe('review fixes (PR #29): close, open and sweep with several leases', () => {
+  const STUB_IP = join(resolve(__dirname), 'helpers', 'stub-ip.mjs');
+  const twoTargets = () =>
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ targets: {
+      prod: { host: 'db.invalid', database: 'd', user: 'u', region: 'us-east-1', securityGroupId: 'sg-1' },
+      dev: { url: 'postgres://u:p@db.invalid/d?sslmode=disable' },
+    } }), { mode: 0o600 });
+
+  it('close with no target: AWS failing on one lease still closes the others, and exits 1', async () => {
+    twoTargets();
+    put({ version: 2, leases: [
+      lease({ sgRuleId: 'sgr-a', sgRegion: 'us-east-1', sgGroupId: 'sg-1' }),
+      lease({ id: 'bbbb2222', target: 'dev' }),
+    ] });
+    const r = await cliWith({ AWS_ENDPOINT_URL_EC2: 'http://127.0.0.1:1' }, 'close');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toMatch(/Lease bbbb2222 closed/);
+    expect(r.stderr).toMatch(/aaaa1111 on "prod" was NOT closed/);
+    const left = JSON.parse(readFileSync(LEASE, 'utf8'));
+    expect(left.target).toBe('prod');
+  });
+
+  it('open: a close while the rule is being created wins; the new rule is revoked', async () => {
+    twoTargets();
+    rmSync(LEASE, { force: true });
+    fake.authorizeDelayMs = 1500;
+    const opening = cliWith({ NODE_OPTIONS: `--import=${STUB_IP}` }, 'open', 'prod', '-r', 'x');
+    for (let i = 0; i < 100 && !(existsSync(LEASE) && readFileSync(LEASE, 'utf8').includes('sgGroupId')); i++) await new Promise((r) => setTimeout(r, 20));
+    expect((await cli('close', 'prod')).code).toBe(0);
+    const r = await opening;
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/closed while daypass open was running/);
+    expect(fake.rules).toEqual([]);
+    expect(existsSync(LEASE)).toBe(false);
+  });
+
+  it('open refuses a target whose rule an expired, unrevoked lease still holds', async () => {
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ targets: {
+      prod: { host: 'db.invalid', database: 'd', user: 'u', region: 'us-east-1', securityGroupId: 'sg-1' },
+      prod2: { host: 'db.invalid', database: 'd2', user: 'u', region: 'us-east-1', securityGroupId: 'sg-1' },
+    } }), { mode: 0o600 });
+    put(lease({ expiresAt: past, sgRuleId: 'sgr-a', sgRegion: 'us-east-1', sgGroupId: 'sg-1', sgPort: 5432 }));
+    fake.calls.length = 0;
+    const r = await cli('open', 'prod2', '-r', 'x');
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/expired lease on "prod" still holds that rule.*daypass close prod/);
+    expect(fake.calls.filter((c) => c.Action === 'AuthorizeSecurityGroupIngress')).toEqual([]);
+  });
+
+  it('sweep keeps an expired lease whose rule is in another group than the one it swept', async () => {
+    twoTargets();
+    put(lease({ expiresAt: past, sgRuleId: 'sgr-z', sgRegion: 'us-east-1', sgGroupId: 'sg-old' }));
+    const r = await cli('sweep', 'prod');
+    expect(r.code).toBe(0);
+    expect(JSON.parse(readFileSync(LEASE, 'utf8')).id).toBe('aaaa1111');
+    expect(r.stderr).toMatch(/sg-old.*daypass close prod/);
+  });
+
+  it('close on an older lease whose target left the config does not point at sweep', async () => {
+    twoTargets();
+    put(lease({ target: 'gone', sgRuleId: 'sgr-q' }));
+    const r = await cli('close', 'gone');
+    expect(r.stderr).toMatch(/not in the config/);
+    expect(r.stderr).not.toMatch(/Run: daypass sweep gone/);
+  });
+
+  it('close on a corrupt file says every lease was removed and live rules stay until they expire', async () => {
+    put('{nope');
+    const r = await cli('close', 'prod');
+    expect(r.stderr).toMatch(/every lease/);
+    expect(r.stderr).toMatch(/until they expire/);
   });
 });

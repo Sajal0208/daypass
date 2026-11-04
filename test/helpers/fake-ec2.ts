@@ -1,5 +1,6 @@
 // A local stand-in for the EC2 query API: enough of Revoke/Describe/Authorize for the daypass
-// security-group paths. Tests point the SDK at it with AWS_ENDPOINT_URL_EC2; nothing reaches AWS.
+// security-group paths, plus STS GetCallerIdentity. Tests point the SDK at it with
+// AWS_ENDPOINT_URL_EC2 and AWS_ENDPOINT_URL_STS; nothing reaches AWS.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -12,6 +13,8 @@ export interface FakeEc2 {
   calls: Record<string, string>[];
   /** Delay before answering a Revoke, in ms. */
   revokeDelayMs: number;
+  /** Delay before answering an Authorize, in ms. */
+  authorizeDelayMs: number;
   close(): Promise<void>;
 }
 
@@ -20,7 +23,7 @@ const err = (code: string) => `<?xml version="1.0"?><Response><Errors><Error><Co
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
 export async function startFakeEc2(): Promise<FakeEc2> {
-  const fake: FakeEc2 = { url: '', rules: [], calls: [], revokeDelayMs: 0, close: async () => {} };
+  const fake: FakeEc2 = { url: '', rules: [], calls: [], revokeDelayMs: 0, authorizeDelayMs: 0, close: async () => {} };
   let n = 0;
   const server = http.createServer((req, res) => {
     let body = '';
@@ -32,6 +35,15 @@ export async function startFakeEc2(): Promise<FakeEc2> {
         res.writeHead(status, { 'content-type': 'text/xml' });
         res.end(xml);
       };
+      if (p.Action === 'GetCallerIdentity') {
+        // STS, so `daypass open` on a region target learns who without leaving the machine.
+        return send(
+          200,
+          '<GetCallerIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><GetCallerIdentityResult>' +
+            '<Arn>arn:aws:iam::123456789012:user/test</Arn><UserId>AIDAEXAMPLE</UserId><Account>123456789012</Account>' +
+            '</GetCallerIdentityResult><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata></GetCallerIdentityResponse>',
+        );
+      }
       if (p.Action === 'RevokeSecurityGroupIngress') {
         if (fake.revokeDelayMs) await new Promise((r) => setTimeout(r, fake.revokeDelayMs));
         const id = p['SecurityGroupRuleId.1'];
@@ -52,6 +64,7 @@ export async function startFakeEc2(): Promise<FakeEc2> {
         return send(200, `<DescribeSecurityGroupRulesResponse xmlns="${NS}"><requestId>r</requestId><securityGroupRuleSet>${items}</securityGroupRuleSet></DescribeSecurityGroupRulesResponse>`);
       }
       if (p.Action === 'AuthorizeSecurityGroupIngress') {
+        if (fake.authorizeDelayMs) await new Promise((r) => setTimeout(r, fake.authorizeDelayMs));
         const id = `sgr-fake${n++}`;
         fake.rules.push({ id, groupId: p.GroupId, description: p['IpPermissions.1.IpRanges.1.Description'] ?? p['IpPermissions.1.Ipv6Ranges.1.Description'] ?? '' });
         return send(200, `<AuthorizeSecurityGroupIngressResponse xmlns="${NS}"><requestId>r</requestId><return>true</return><securityGroupRuleSet><item><securityGroupRuleId>${id}</securityGroupRuleId></item></securityGroupRuleSet></AuthorizeSecurityGroupIngressResponse>`);
@@ -69,6 +82,7 @@ export async function startFakeEc2(): Promise<FakeEc2> {
 export function fakeAwsEnv(fake: FakeEc2, dir: string): Record<string, string> {
   return {
     AWS_ENDPOINT_URL_EC2: fake.url,
+    AWS_ENDPOINT_URL_STS: fake.url,
     AWS_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
     AWS_SECRET_ACCESS_KEY: 'fake',
     AWS_EC2_METADATA_DISABLED: 'true',
