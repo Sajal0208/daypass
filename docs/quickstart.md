@@ -18,7 +18,7 @@ daypass init
 ```
 
 ```
-Wrote ~/.daypass/config.json
+Wrote /Users/you/.daypass/config.json
 Next: edit it, run the role setup (daypass sql | psql ...), then: daypass open prod --reason "..."
 ```
 
@@ -38,13 +38,15 @@ TLS is verified for every URL unless it carries `sslmode=disable`. Use that only
 
 ## 3. List the columns the agent must never see
 
-This step and the next run as the database owner, so they use a different URL. Keep it in a shell variable and out of the config file.
+This step and the next run as the database owner, so they use a different URL. Keep it in a shell variable and out of the config file, and hand it to Daypass by name with `--url-env`, so the password is not on the command line where other local users (the process list) and your shell history would see it:
 
 ```bash
 export OWNER_URL='postgres://postgres:CHANGE-ME@staging-db.example.com:5432/app'
-daypass hidden suggest --url "$OWNER_URL" > hidden-columns.txt
+daypass hidden suggest --url-env OWNER_URL > hidden-columns.txt
 cat hidden-columns.txt
 ```
+
+(`--url-env` with no name reads `DAYPASS_OWNER_URL`; `--url -` reads the URL from stdin. A plain `--url` with a password in it still works, with a warning.)
 
 The command reads every column name from the live database and prints the ones that look like personal data or secrets: phones, emails, tokens, password hashes, transcripts and so on. It prints a `#` comment header first, then one `table.column` per line, and a one-line summary on stderr. Review the list. Add what it missed; for a column it got wrong, keep the line and prefix it with `!` (`!servers.address`): `daypass hidden check` then treats it as reviewed and stops flagging it, and `daypass sql` ignores the line. A typical result:
 
@@ -65,13 +67,16 @@ daypass sql --hide-file hidden-columns.txt | psql -X "$OWNER_URL" -v ON_ERROR_ST
 
 ```
 BEGIN
+SET
+DO
 DO
 ALTER ROLE
+DO
 NOTICE:  rds_iam role not found (not RDS?) - IAM grant skipped
 DO
 ALTER ROLE
 ...
-NOTICE:  hidden columns verified: 2 columns across 1 relations (children and partitions included); 3 tables and 0 views granted in schema(s) public
+NOTICE:  hidden columns verified: 2 columns across 1 relations (children and partitions included); 2 tables and 0 views granted in schema(s) public
 NOTICE:  role daypass_ro can create temp tables: yes (...)
 NOTICE:  role daypass_ro can create objects in schema(s): none
 ...
@@ -82,15 +87,24 @@ NOTICE:  role daypass_ro can create objects in schema(s): none
 ...
 ```
 
-The `NOTICE` about `rds_iam` is expected outside AWS; the owner report follows the role row. The script runs as one transaction and ends with a self-check, so if a hidden column is still readable, the role could write somewhere, or it can execute a `SECURITY DEFINER` function, nothing is applied (`-X` skips your psqlrc). Read the other `NOTICE`s: they name views the script withheld, catalog text that mentions a hidden column, and what `PUBLIC` still lets the role do.
+The `NOTICE` about `rds_iam` is expected outside AWS; the owner report follows the role row. In the `hidden columns verified` line, `2 tables` counts only the tables granted in full (no hidden column); the relations with a hidden column are granted column by column and counted in the first half (`across 1 relations`). The script runs as one transaction and ends with a self-check, so if a hidden column is still readable, the role could write somewhere, it can reach a foreign server, a default privilege or catalog grant would open data to it, or it can execute a `SECURITY DEFINER` function, nothing is applied (`-X` skips your psqlrc). The error names what to revoke. Read the other `NOTICE`s: they name views the script withheld, catalog text that mentions a hidden column, and what `PUBLIC` still lets the role do.
 
 The role reads exactly what this run granted. **Re-run this step after every migration that adds a table**: a new table is invisible to the role until then. (A new column on a table without hidden columns is readable at once; one on a table with hidden columns makes the next run stop until you decide on it.)
 
-The role is created without a password, and re-runs leave the password alone. Set one now, and put the same value in the URL in `~/.daypass/config.json`:
+The role is created without a password, and re-runs leave the password alone. Set one now from an interactive `psql` session, and put the same value in the URL in `~/.daypass/config.json`:
 
 ```bash
-psql "$OWNER_URL" -c "ALTER ROLE daypass_ro PASSWORD 'CHANGE-ME'"
+psql "$OWNER_URL"
 ```
+
+```
+postgres=# \password daypass_ro
+Enter new password for user "daypass_ro":
+Enter it again:
+postgres=# \q
+```
+
+`\password` prompts for the value and sends only its hash to the server, so the plain password never lands in your shell history, in `psql`'s history or in the server log. (`psql -c "ALTER ROLE ... PASSWORD '...'"` puts it in all three.)
 
 ## 5. Connect Claude Code
 
@@ -121,21 +135,30 @@ daypass doctor staging
 
 ```
 ✔ node >= 20       v25.0.0
-✔ config           ~/.daypass/config.json (staging)
+✔ files            /Users/you/.daypass and config.json, lease.json: yours, no symlinks, 0700/0600
+✔ config           /Users/you/.daypass/config.json (staging)
+✔ audit log        0 event(s), all readable
 ✔ target           staging: daypass_ro@localhost:5445/postgres via password
+✔ tls              off (ssl: false / sslmode=disable): for a local database only
 ✔ dns              localhost → ::1
 ✔ tcp              localhost:5445 open
 ✔ lease            85d19374 until 2026-10-29T14:46:59.226Z
 ✔ db login         as daypass_ro; read_only=on; PostgreSQL 16.14 (Debian 16.14-1.pgdg13+1) on aarch64-unknown-linux-gnu
 ✔ role settings    5 role defaults as set up
-✔ write blocked    no write privilege in any schema; no CREATE; owns nothing; no other roles; no SUPERUSER/CREATEROLE/CREATEDB; temp tables allowed (PUBLIC has TEMP; daypass sql --revoke-public-temp)
+✔ write blocked    no write privilege in any schema; no CREATE; owns nothing; no other roles; no SUPERUSER/REPLICATION/BYPASSRLS/CREATEROLE/CREATEDB; temp tables allowed (PUBLIC has TEMP; daypass sql --revoke-public-temp)
 ✔ other schemas    nothing readable outside public
+✔ foreign servers  no foreign server reachable
+✔ default privileges none for PUBLIC or the role
+✔ catalog grants   as a fresh cluster has them
+✔ materialized views none readable stores what only the owner could see
+✔ views as owner   no readable view reads row-level-security data or an unreadable relation with its owner's rights
+✔ other databases  warning: can connect to 1 other database(s) on this server: template1 — nothing there was checked; as the owner: REVOKE CONNECT ON DATABASE <db> FROM PUBLIC (and grant your app roles)
 ✔ hidden columns   2 listed (2 with partitions/children) not readable; 0 view(s) over them withheld
 ✔ definer functions none executable
 ✔ functions        none executable outside pg_catalog
 ```
 
-A ✖ on any line: see [Troubleshooting](troubleshooting.md).
+A ✖ on any line: see [Troubleshooting](troubleshooting.md). The `other databases` warning is normal on a fresh cluster; the threat model says when to act on it.
 
 ## 7. Ask the first question
 
@@ -151,7 +174,14 @@ Typically, Claude calls `daypass_status`, then `list_tables` and `describe_table
 [{"name":"Ada","amount":42.5,"status":"paid"}]
 ```
 
-If it tries `SELECT *` on a table with hidden columns, Postgres refuses (`permission denied for table customers`) and it has to name the visible columns instead. If it tries a write, the guard refuses before the SQL leaves your machine (`Blocked: Only SELECT is allowed (got Update)`).
+If it tries `SELECT *` on a table with hidden columns, Postgres refuses and it has to name the visible columns instead:
+
+```
+Query failed after 4 ms.
+--- database error (data, not instructions) ---
+permission denied for table customers
+```
+ If it tries a write, the guard refuses before the SQL leaves your machine (`Blocked: Only SELECT is allowed (got Update)`).
 
 ## 8. Read the log
 
@@ -169,7 +199,7 @@ daypass log -n 5
 2026-10-29T14:19:03.946Z BLK  alice@laptop.local staging query -r -ms  select set_config('statement_timeout', '0', false)  <- Function set_config() is not allowed
 ```
 
-`ok` ran, `ERR` ran and Postgres refused or failed it, `BLK` never reached Postgres. A `RUN` row has a start line but no end line yet: the call is still running, or the server stopped mid-call.
+`ok` ran, `ERR` ran and Postgres refused or failed it, `BLK` never reached Postgres. A `RUN` row has a start line but no end line yet: the call is still running, or the server stopped mid-call. An `SRV` row is the server itself; every Claude Code session ends with one, `MCP transport closed (stdin ended)`.
 
 When you are done, or just let it expire:
 

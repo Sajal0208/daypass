@@ -8,7 +8,7 @@ describe('looksSensitive', () => {
   it.each([
     'phone', 'phone_number', 'mobile', 'email', 'email_address', 'api_key', 'key_hash', 'secret',
     'client_secret', 'token', 'refresh_token', 'password', 'password_hash', 'transcript', 'address',
-    'street_address', 'ssn', 'iban', 'card_number', 'encrypted_payload', 'prompt_snapshot', 'date_of_birth',
+    'street_address', 'ssn', 'iban', 'card_number', 'encrypted_payload', 'date_of_birth',
   ])('flags %s', (c) => expect(looksSensitive(c)).toBe(true));
 
   it.each(['id', 'created_at', 'status', 'email_verified', 'phone_country', 'tokens_used', 'keyboard_layout', 'name', 'amount'])(
@@ -29,6 +29,21 @@ describe('looksSensitive', () => {
     'does not flag %s (tuned safe tails)',
     (c) => expect(looksSensitive(c)).toBe(false),
   );
+});
+
+describe('looksSensitive: run-together and plural names (third review)', () => {
+  it.each([
+    'emailaddress', 'phonenumber', 'passwordhash', 'apikey', 'firstname', 'lastname', 'dateofbirth', 'secrets',
+    'passwords', 'access_tokens', 'api_keys', 'addresses', 'EMAILADDRESS', 'apikeys', 'accesstoken', 'ipaddress',
+    'creditcard', 'cardnumber', 'accountnumber', 'taxid', 'nationalid', 'apikeyid', 'useragent', 'phone_numbers',
+    'email_addresses', 'refreshtokens', 'fullname', 'streetaddress',
+  ])('flags %s', (c) => expect(looksSensitive(c)).toBe(true));
+  it.each([
+    // a foreign key to an addresses table is not an address
+    'address_id', 'addressid', 'tokens_used', 'tokencount', 'emailverified', 'cache_keys', 'partition_keys',
+    'publickey', 'keyboard', 'monkey', 'panel', 'company', 'pinned', 'spinner', 'tokenizer', 'zipper', 'status',
+    'statuses', 'lines', 'prompt_snapshot', 'hostname', 'filename', 'lastlogin', 'firstseen',
+  ])('does not flag %s', (c) => expect(looksSensitive(c)).toBe(false));
 });
 
 describe('parsePrismaColumns', () => {

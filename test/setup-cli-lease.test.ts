@@ -66,7 +66,7 @@ describe('daypass open/close (review 2026-10-30)', () => {
       writeFileSync(
         join(home, 'config.json'),
         JSON.stringify({
-          targets: { prod: { host: 'db.example.invalid', database: 'db', user: 'daypass_ro', region: 'eu-central-1', securityGroupId: 'sg-00000000000000000' } },
+          targets: { prod: { host: 'db.example.invalid', database: 'db', user: 'daypass_ro', region: 'us-east-1', securityGroupId: 'sg-00000000000000000' } },
         }),
       );
       const r = await run(

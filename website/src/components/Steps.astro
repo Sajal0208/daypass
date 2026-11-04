@@ -1,0 +1,83 @@
+---
+/**
+ * The three-step summary above the flow diagram. Each step says what README.md "How it works"
+ * and docs/concepts.md say, shorter: TTL bounds (60 s to 8 h) from the Lease section, the five
+ * tools from "MCP tools", the audit fields from the "Audit" layer.
+ */
+---
+
+<ol class="steps">
+	<li>
+		<span class="num" aria-hidden="true">1</span>
+		<h3>Open a lease</h3>
+		<p>
+			<code>daypass open prod --ttl 45m --reason "…"</code> writes a lease file on your machine.
+			The reason is required; the TTL is between 60 s and 8 h.
+		</p>
+	</li>
+	<li>
+		<span class="num" aria-hidden="true">2</span>
+		<h3>The agent asks, SELECT-only</h3>
+		<p>
+			Five MCP tools: <code>daypass_status</code>, <code>list_tables</code>,
+			<code>describe_table</code>, <code>explain</code>, <code>query</code>. Each statement goes
+			through Postgres's own parser and runs in a read-only transaction as a role with no write
+			privilege.
+		</p>
+	</li>
+	<li>
+		<span class="num" aria-hidden="true">3</span>
+		<h3>It expires, the log shows what was read</h3>
+		<p>
+			The next call after expiry is refused. <code>~/.daypass/audit.jsonl</code> holds who, why,
+			what, how many rows and how long, for every call; <code>daypass log</code> prints it.
+		</p>
+	</li>
+</ol>
+
+<style>
+	.steps {
+		list-style: none;
+		margin: 0 0 2rem;
+		padding: 0;
+		display: grid;
+		gap: 1rem;
+	}
+	li {
+		position: relative;
+		padding: 1.1rem 1.1rem 1.1rem 3.4rem;
+		border: 1px solid var(--sl-color-hairline-light);
+		border-radius: 0.75rem;
+		background: var(--sl-color-bg-nav);
+	}
+	.num {
+		position: absolute;
+		left: 1.1rem;
+		top: 1.1rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.6rem;
+		height: 1.6rem;
+		border-radius: 50%;
+		background: var(--sl-color-accent-low);
+		color: var(--sl-color-text-accent);
+		font-family: var(--font-mono);
+		font-size: 0.85rem;
+		font-weight: 600;
+	}
+	h3 {
+		font-size: 1.05rem;
+		margin-bottom: 0.35rem;
+	}
+	p {
+		font-size: 0.925rem;
+		line-height: 1.55;
+		color: var(--sl-color-text);
+	}
+	@media (min-width: 48em) {
+		.steps {
+			grid-template-columns: repeat(3, 1fr);
+		}
+	}
+</style>

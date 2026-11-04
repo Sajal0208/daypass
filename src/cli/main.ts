@@ -16,20 +16,21 @@ import {
   readLease,
   writeLease,
   clearLease,
-  readAudit,
+  readAuditDetailed,
+  writeConfigIfMissing,
+  LeaseCorruptError,
   resolveTarget,
   serveStdio,
   CONFIG_PATH,
-  DAYPASS_HOME,
   allowIp,
-  revokeRule,
+  revokeLeaseRule,
   sweepExpired,
   myPublicIp,
 } from '../mcp/index.js';
 import type { TargetConfig } from '../mcp/index.js';
 import { doctor } from './doctor.js';
 import { hiddenCommand } from './hidden.js';
-import { formatLog } from './log.js';
+import { formatLog, printable as p } from './log.js';
 
 const require = createRequire(import.meta.url);
 const { version } = require('../../package.json') as { version: string };
@@ -65,32 +66,25 @@ function osUser(): string {
 }
 
 async function releaseNetwork(lease: Lease, t: TargetConfig | undefined) {
-  if (lease.sgRuleId && t?.region && t.securityGroupId) {
-    await revokeRule({ region: t.region, profile: t.awsProfile, groupId: t.securityGroupId, ruleId: lease.sgRuleId });
-    console.log(`Removed security-group rule ${lease.sgRuleId}`);
-  }
+  const r = await revokeLeaseRule(lease, t);
+  if (r.revoked) console.log(`Removed security-group rule ${p(lease.sgRuleId)}`);
+  if (r.warning) console.warn(`warning: ${p(r.warning)}`);
 }
 
 program
   .command('init')
   .description(`Write a starter config to ${CONFIG_PATH}`)
   .action(async () => {
-    await fs.mkdir(DAYPASS_HOME, { recursive: true, mode: 0o700 });
-    try {
-      await fs.access(CONFIG_PATH);
-      console.log(`Config already exists: ${CONFIG_PATH}`);
-      return;
-    } catch {}
     const example = {
       $comment: 'One entry per database. Give either "url" (any Postgres) or host/database/user + "region" (AWS RDS, IAM auth, no password).',
       targets: {
         local: { url: 'postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable' },
         prod: {
-          host: 'my-db.abc123.eu-central-1.rds.amazonaws.com',
+          host: 'my-db.abc123.us-east-1.rds.amazonaws.com',
           port: 5432,
           database: 'mydb',
           user: 'daypass_ro',
-          region: 'eu-central-1',
+          region: 'us-east-1',
           awsProfile: 'default',
           securityGroupId: 'sg-xxxxxxxxxxxxxxxxx',
           schemas: ['public'],
@@ -98,7 +92,10 @@ program
         },
       },
     };
-    await fs.writeFile(CONFIG_PATH, JSON.stringify(example, null, 2), { mode: 0o600 });
+    if (!(await writeConfigIfMissing(JSON.stringify(example, null, 2)))) {
+      console.log(`Config already exists: ${CONFIG_PATH}`);
+      return;
+    }
     console.log(`Wrote ${CONFIG_PATH}\nNext: edit it, run the role setup (daypass sql | psql ...), then: daypass open prod --reason "..."`);
   });
 
@@ -144,8 +141,7 @@ program
 
     const existing = await readLease();
     if (existing && isLeaseLive(existing)) {
-      console.log(`A lease is already open (${existing.id} on ${existing.target}, until ${existing.expiresAt}). Run: daypass close`);
-      return;
+      throw new Error(`A lease is already open (${p(existing.id)} on ${p(existing.target)}, until ${p(existing.expiresAt)}). Run: daypass close`);
     }
     if (existing) await releaseNetwork(existing, cfg.targets[existing.target]).catch((e) => console.warn(`cleanup: ${e.message}`));
 
@@ -167,6 +163,10 @@ program
     if (opts.network && t.region && t.securityGroupId) {
       try {
         lease.ip = await myPublicIp();
+        // Recorded before the rule exists, so close/cleanup revoke it in this group even if the config changes.
+        lease.sgRegion = t.region;
+        lease.sgGroupId = t.securityGroupId;
+        if (t.awsProfile) lease.sgProfile = t.awsProfile;
         await writeLease(lease);
         lease.sgRuleId = await allowIp({
           region: t.region,
@@ -198,8 +198,8 @@ program
     const left = Math.round((Date.parse(l.expiresAt) - Date.now()) / 60_000);
     console.log(
       isLeaseLive(l)
-        ? `Lease ${l.id} on "${l.target}" by ${l.who}: ${left} min left. Reason: ${l.reason}`
-        : `Lease ${l.id} on "${l.target}" expired at ${l.expiresAt}. Run: daypass close`,
+        ? `Lease ${p(l.id)} on "${p(l.target)}" by ${p(l.who)}: ${left} min left. Reason: ${p(l.reason)}`
+        : `Lease ${p(l.id)} on "${p(l.target)}" expired at ${p(l.expiresAt)}. Run: daypass close`,
     );
   });
 
@@ -207,26 +207,32 @@ program
   .command('close')
   .description('End the lease now and remove the network rule')
   .action(async () => {
-    const l = await readLease();
-    if (!l) return console.log('No lease.');
-    let cfg: { targets: Record<string, TargetConfig> } | undefined;
+    let l: Lease | null;
     try {
-      cfg = await readConfig();
+      l = await readLease();
     } catch (e: any) {
-      if (l.sgRuleId) {
+      if (!(e instanceof LeaseCorruptError)) throw e;
+      await clearLease();
+      console.warn('Removed the corrupt lease file. If it held a security-group rule, run: daypass sweep <target>');
+      return;
+    }
+    if (!l) return console.log('No lease.');
+    // The lease records where its rule lives; older leases fall back to the config.
+    const recorded = !!(l.sgRegion && l.sgGroupId);
+    let cfg: { targets: Record<string, TargetConfig> } | undefined;
+    if (l.sgRuleId && !recorded) {
+      try {
+        cfg = await readConfig();
+      } catch (e: any) {
         console.warn(
-          `warning: cannot read the config (${e.message}); security-group rule ${l.sgRuleId} was NOT revoked. ` +
-            `Restore the config and run: daypass sweep ${l.target}`,
+          `warning: cannot read the config (${p(e.message)}); security-group rule ${p(l.sgRuleId)} was NOT revoked. ` +
+            `Restore the config and run: daypass sweep ${p(l.target)}`,
         );
       }
     }
-    const t = cfg?.targets[l.target];
-    if (cfg && l.sgRuleId && !(t?.region && t.securityGroupId)) {
-      console.warn(`warning: target "${l.target}" has no region/securityGroupId in the config; rule ${l.sgRuleId} was NOT revoked. Run: daypass sweep ${l.target}`);
-    }
-    await releaseNetwork(l, t);
+    if (l.sgRuleId && (recorded || cfg)) await releaseNetwork(l, cfg?.targets[l.target]);
     await clearLease();
-    console.log(`Lease ${l.id} closed.`);
+    console.log(`Lease ${p(l.id)} closed.`);
   });
 
 program
@@ -241,7 +247,7 @@ program
     const l = await readLease();
     if (l && !isLeaseLive(l)) {
       await clearLease();
-      console.log(`Cleared expired local lease ${l.id}.`);
+      console.log(`Cleared expired local lease ${p(l.id)}.`);
     }
   });
 
@@ -251,8 +257,11 @@ program
   .option('-n, --last <n>', 'how many', '30')
   .action(async (opts: { last: string }) => {
     // Up to two lines per call (start + end): read twice as many, pair them, keep the last n rows.
+    if (!/^\d+$/.test(opts.last) || Number(opts.last) < 1) throw new Error(`-n must be a positive integer (got "${opts.last}")`);
     const n = Number(opts.last);
-    for (const line of formatLog(await readAudit(n * 2), n)) console.log(line);
+    const { events, corrupt } = await readAuditDetailed(n * 2);
+    if (corrupt) console.error(`warning: ${corrupt} unreadable line(s) in the audit log were skipped`);
+    for (const line of formatLog(events, n)) console.log(line);
   });
 
 program

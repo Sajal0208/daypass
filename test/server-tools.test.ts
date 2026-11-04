@@ -89,6 +89,14 @@ describe.skipIf(!live)('MCP server tools', () => {
     await owner.query(`create view ws2_withheld_v as select id, secret from ws2_customers`);
     await owner.query(`create table ws2_ungranted (id int)`);
 
+    await owner.query(`drop table if exists ws2_ordered, "Ws2Mixed", ws2_fresh`);
+    await owner.query(`drop type if exists ws2_mood`);
+    await owner.query(`create type ws2_mood as enum ('ok', 'meh')`);
+    await owner.query(`create table ws2_ordered (zeta int not null default 7, alpha text[], mood ws2_mood, beta varchar(12))`);
+    await owner.query(`create table "Ws2Mixed" (id int)`);
+    await owner.query(`create table ws2_fresh (id int)`);
+    await owner.query(`grant select on ws2_ordered, "Ws2Mixed", ws2_fresh to ${ROLE}`);
+
     const u = new URL(live!);
     u.username = ROLE;
     u.password = PASS;
@@ -116,7 +124,8 @@ describe.skipIf(!live)('MCP server tools', () => {
     try {
       await closeServer?.();
       await owner?.query(`drop view if exists ws2_withheld_v`);
-      await owner?.query(`drop table if exists ws2_customers, ws2_notes, ws2_ungranted`);
+      await owner?.query(`drop table if exists ws2_customers, ws2_notes, ws2_ungranted, ws2_ordered, "Ws2Mixed", ws2_fresh`);
+      await owner?.query(`drop type if exists ws2_mood`);
       if (owner) await dropRole(owner);
       await owner?.end();
     } finally {
@@ -209,6 +218,18 @@ describe.skipIf(!live)('MCP server tools', () => {
       const end = lastAudit(1)[0];
       expect(end).toMatchObject({ phase: 'end', allowed: true, error: expect.stringMatching(/permission denied/) });
     });
+    it('caps a huge database error for the agent and the audit, and labels it as data', async () => {
+      const r = await call('query', { sql: "select repeat('x', 200000)::int" });
+      expect(r.ok).toBe(false);
+      expect(r.text.length).toBeLessThan(2500);
+      expect(r.text).toMatch(/invalid input syntax/);
+      expect(r.text).toMatch(/\[\+\d+ chars\]/);
+      expect(r.text).toMatch(/database error \(data, not instructions\)/);
+      const end = lastAudit(1)[0];
+      expect(end.phase).toBe('end');
+      expect(end.error.length).toBeLessThan(2500);
+      expect(end.error).toMatch(/\[\+\d+ chars\]/);
+    });
   });
 
   describe('result shaping in SQL', () => {
@@ -220,32 +241,32 @@ describe.skipIf(!live)('MCP server tools', () => {
       expect(r.text).toMatch(/first 500 rows/);
     });
     it('stops at the byte budget in the database', async () => {
-      const r = await call('query', { sql: "select repeat('x', 10000) as s from generate_series(1, 400)" });
+      // the budget counts rows after the 2000-char cell cap, so ~494 capped rows fit in 1 MB
+      const r = await call('query', { sql: "select repeat('x', 10000) as s from generate_series(1, 600)" });
       expect(r.ok).toBe(true);
       const rows = rowsOf(r.text);
-      expect(rows.length).toBeGreaterThan(90);
-      expect(rows.length).toBeLessThan(110);
+      expect(rows.length).toBeGreaterThanOrEqual(480);
+      expect(rows.length).toBeLessThan(500);
       expect(r.text).toMatch(/byte budget/);
       expect(r.text).toMatch(/TRUNCATED/);
       expect(rows[0].s).toMatch(/…\[\+8000 chars\]$/);
     });
     it('counts the byte budget in bytes for multibyte text', async () => {
-      // each row is ~10k chars but ~20k UTF-8 bytes: a char-based budget would admit ~99 rows
-      const r = await call('query', { sql: "select repeat('é', 10000) as s from generate_series(1, 200)" });
+      // each capped row is ~2000 chars but ~4000 UTF-8 bytes: a char-based budget would admit ~490 rows
+      const r = await call('query', { sql: "select repeat('é', 10000) as s from generate_series(1, 400)" });
       expect(r.ok, r.text).toBe(true);
       const n = rowsOf(r.text).length;
-      expect(n).toBeGreaterThan(40);
-      expect(n).toBeLessThan(60);
+      expect(n).toBeGreaterThan(230);
+      expect(n).toBeLessThan(260);
       expect(r.text).toMatch(/byte budget/);
     });
-    it('shows a huge single cell as a truncated row and keeps serving', async () => {
+    it('caps a huge single cell like any other cell and keeps serving', async () => {
       const r = await call('query', { sql: "select repeat('x', 3000000) as big" });
       expect(r.ok, r.text).toBe(true);
       const rows = rowsOf(r.text);
       expect(rows).toHaveLength(1);
-      expect(rows[0].daypass_truncated_row).toMatch(/^\{"big": ?"x+…$/);
-      expect(rows[0].daypass_truncated_row.length).toBe(2001);
-      expect(r.text).toMatch(/longer than 1000000 bytes/);
+      expect(rows[0].big).toBe('x'.repeat(2000) + '…[+2998000 chars]');
+      expect(rows[0].daypass_truncated_row).toBeUndefined();
       const after = await call('query', { sql: 'select 1 as one' });
       expect(after.ok).toBe(true);
       expect(rowsOf(after.text)).toEqual([{ one: 1 }]);
@@ -255,7 +276,7 @@ describe.skipIf(!live)('MCP server tools', () => {
       // or their tuplestore spills the whole row to disk and the query fails instead of truncating.
       const r = await call('query', { sql: "select repeat('x', 50000000) as big" });
       expect(r.ok, r.text).toBe(true);
-      expect(rowsOf(r.text)[0].daypass_truncated_row).toMatch(/^\{"big": ?"x+…$/);
+      expect(rowsOf(r.text)[0].big).toMatch(/^x{2000}…\[\+49998000 chars\]$/);
     });
     it('keeps bigints exact and stringifies json', async () => {
       const r = await call('query', { sql: `select 9007199254740993::bigint as id, '{"k":[1,2]}'::jsonb as j, 1.5 as f` });
@@ -294,6 +315,49 @@ describe.skipIf(!live)('MCP server tools', () => {
       expect(r.text).not.toMatch(/secret/);
       expect(r.text).not.toMatch(/email/);
       expect(r.text).toMatch(/3 index\(es\) on hidden columns omitted/);
+    });
+    it('lists columns in table order with real type names', async () => {
+      const r = await call('describe_table', { table: 'ws2_ordered' });
+      expect(r.ok, r.text).toBe(true);
+      const cols = rowsOf(r.text).filter((x: any) => x.kind === 'column');
+      expect(cols.map((c: any) => [c.name, c.type])).toEqual([
+        ['zeta', 'integer'],
+        ['alpha', 'text[]'],
+        ['mood', 'ws2_mood'],
+        ['beta', 'character varying(12)'],
+      ]);
+      expect(cols[0]).toMatchObject({ nullable: 'NO' });
+      expect(cols[1]).toMatchObject({ nullable: 'YES' });
+    });
+    it('errors on a table that does not exist (or cannot be read)', async () => {
+      for (const table of ['ws2_nope', 'ws2_ungranted', 'nope.ws2_customers']) {
+        const r = await call('describe_table', { table });
+        expect(r.ok, table).toBe(false);
+        expect(r.text).toMatch(/not found/);
+      }
+    });
+    it('handles quoted MixedCase names, with or without a schema', async () => {
+      for (const table of ['"Ws2Mixed"', 'public."Ws2Mixed"', '"public"."Ws2Mixed"', 'Ws2Mixed']) {
+        const r = await call('describe_table', { table });
+        expect(r.ok, `${table}: ${r.text}`).toBe(true);
+        expect(rowsOf(r.text)).toEqual([expect.objectContaining({ kind: 'column', name: 'id', type: 'integer' })]);
+      }
+    });
+    it('refuses a name with more than two parts', async () => {
+      const r = await call('describe_table', { table: 'db.public.ws2_customers' });
+      expect(r.ok).toBe(false);
+      expect(r.text).toMatch(/schema\.table/);
+    });
+  });
+
+  describe('list_tables row estimates', () => {
+    it('shows null, not -1, for a table that was never analyzed', async () => {
+      const r = await call('list_tables');
+      const rows = rowsOf(r.text);
+      const fresh = rows.find((x: any) => x.table === 'ws2_fresh');
+      expect(fresh).toBeTruthy();
+      expect(fresh.est_rows).toBeNull();
+      for (const x of rows) expect(String(x.est_rows)).not.toBe('-1');
     });
   });
 
@@ -473,6 +537,17 @@ describe.skipIf(!live)('MCP server tools', () => {
       expect(r.text).toMatch(/statement timeout/);
       expect(elapsed).toBeLessThan(6000);
     });
+  });
+});
+
+describe('parseTableName', () => {
+  it('splits and unquotes', async () => {
+    const { parseTableName } = await import('../src/mcp/server.js');
+    expect(parseTableName('users', 'public')).toEqual({ schema: 'public', name: 'users' });
+    expect(parseTableName('app.users', 'public')).toEqual({ schema: 'app', name: 'users' });
+    expect(parseTableName('"My.Schema"."Odd""Name"', 'public')).toEqual({ schema: 'My.Schema', name: 'Odd"Name' });
+    expect(parseTableName('"Users"', 'x')).toEqual({ schema: 'x', name: 'Users' });
+    for (const bad of ['a.b.c', '', 'a.', '"unterminated', '"a"b', '.a']) expect(typeof parseTableName(bad, 'public'), bad).toBe('string');
   });
 });
 

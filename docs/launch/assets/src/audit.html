@@ -1,0 +1,14 @@
+<!doctype html><meta charset=utf-8><link rel=stylesheet href=base.css><style>
+.line{margin-top:22px;background:#0e1719;border:1px solid #22302f;border-radius:10px;padding:20px 22px;font-size:17px;line-height:1.7;font-family:"SF Mono",Menlo,monospace;color:#8a979c;overflow-wrap:anywhere}
+.lbl{font-family:-apple-system,sans-serif;font-size:15px;font-weight:700;letter-spacing:.08em;color:#2dd4bf;margin-top:30px}
+.k{color:#8a979c}.h{color:#fff;background:#134e48;border-radius:3px;padding:0 3px}
+p.n{margin-top:26px;font-size:19px;color:#c4cfd3;line-height:1.5}
+</style><body>
+<h1>Every call leaves two lines</h1><div class=cap>Written before the query runs, and when it ends. Paired by <span class=mono>callId</span>.</div>
+<div class=lbl>START</div>
+<div class=line>{"at":"2026-10-28T14:21:07.271Z",<span class=h>"who":"arn:aws:iam::123456789012:user/alice"</span>,"leaseId":"3f9a1c2e","target":"prod",<span class=h>"reason":"debug order 1234"</span>,"tool":"query",<span class=h>"sql":"select id, status, created_at from payments where order_id = 1234 order by created_at desc limit 50"</span>,"allowed":true,"phase":"start","callId":"9b2e41d0"}</div>
+<div class=lbl>END</div>
+<div class=line>{"at":"2026-10-28T14:21:07.312Z",<span class=h>"who":"arn:aws:iam::123456789012:user/alice"</span>,"leaseId":"3f9a1c2e","target":"prod",<span class=h>"reason":"debug order 1234"</span>,"tool":"query",<span class=h>"sql":"select id, status, created_at from payments where order_id = 1234 order by created_at desc limit 50"</span>,"allowed":true,"phase":"end",<span class=h>"rows":50</span>,<span class=h>"ms":41</span>,"callId":"9b2e41d0"}</div>
+<p class=n>A start line with no end line means the call never finished. <span class=mono>daypass log</span> shows it as <span class=mono>RUN</span>.</p>
+<div class=foot>Example values. File: ~/.daypass/audit.jsonl</div>
+</body>

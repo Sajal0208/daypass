@@ -57,8 +57,26 @@ BEGIN
     RAISE EXCEPTION 'PostgreSQL 16+: % may not alter role "__ROLE__" (no ADMIN OPTION on it). Run this script as the user that created the role or as a superuser, or have one of them run: GRANT "__ROLE__" TO % WITH ADMIN OPTION;', current_user, quote_ident(current_user);
   END IF;
 END $$;
--- SUPERUSER / REPLICATION / BYPASSRLS are not named here: a new role never has them, and on
--- RDS the master user is not a superuser, so even "NOSUPERUSER" is refused.
+-- SUPERUSER / REPLICATION / BYPASSRLS: removed on every run, but named only when set. Only a
+-- superuser may change them (on RDS the master user is not one, so even a no-op "NOSUPERUSER" is
+-- refused). REPLICATION reads every row through a logical replication slot; BYPASSRLS skips
+-- row-level security. The last step before COMMIT verifies all five attributes.
+DO $$
+DECLARE
+  attrs text;
+BEGIN
+  SELECT concat_ws(' ', CASE WHEN rolsuper THEN 'NOSUPERUSER' END, CASE WHEN rolreplication THEN 'NOREPLICATION' END,
+                        CASE WHEN rolbypassrls THEN 'NOBYPASSRLS' END)
+    INTO attrs FROM pg_roles WHERE rolname = '__ROLE__';
+  IF attrs <> '' THEN
+    BEGIN
+      EXECUTE 'ALTER ROLE "__ROLE__" WITH ' || attrs;
+    EXCEPTION WHEN insufficient_privilege THEN
+      RAISE EXCEPTION 'role % has %, and only a superuser can remove that. Have one run: ALTER ROLE % WITH %; then re-run',
+        '__ROLE__', replace(attrs, 'NO', ''), quote_ident('__ROLE__'), attrs;
+    END;
+  END IF;
+END $$;
 ALTER ROLE "__ROLE__" WITH LOGIN NOCREATEDB NOCREATEROLE NOINHERIT CONNECTION LIMIT 5;
 
 -- The role must own nothing and belong to nothing. Owned objects are what it could have planted
@@ -99,12 +117,28 @@ BEGIN
   END IF;
 END $$;
 
--- RDS only. On plain Postgres (local dev) rds_iam does not exist and this is skipped. A re-run
--- skips the GRANT when the role is already a member (PG 16 would need ADMIN OPTION on rds_iam).
+-- RDS only. On plain Postgres (local dev) rds_iam does not exist and this is skipped. IAM login
+-- needs the membership only, never rds_iam's privileges. PostgreSQL 16+: granted WITH INHERIT
+-- FALSE, SET FALSE, so the role can neither use nor SET ROLE to rds_iam (an older grant is
+-- narrowed the same way). Before 16, SET ROLE rds_iam cannot be prevented: the last step before
+-- COMMIT then refuses an rds_iam that holds anything. The GRANT runs only when needed (it needs
+-- ADMIN OPTION on rds_iam from PG 16).
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rds_iam') THEN
     RAISE NOTICE 'rds_iam role not found (not RDS?) - IAM grant skipped';
+  ELSIF current_setting('server_version_num')::int >= 160000 THEN
+    IF NOT pg_has_role('__ROLE__', 'rds_iam', 'MEMBER')
+       OR EXISTS (SELECT 1 FROM pg_auth_members m
+                   WHERE m.roleid = (SELECT oid FROM pg_roles WHERE rolname = 'rds_iam')
+                     AND m.member = (SELECT oid FROM pg_roles WHERE rolname = '__ROLE__')
+                     AND (m.set_option OR m.inherit_option)) THEN
+      BEGIN
+        EXECUTE 'GRANT rds_iam TO "__ROLE__" WITH INHERIT FALSE, SET FALSE';
+      EXCEPTION WHEN insufficient_privilege THEN
+        RAISE EXCEPTION 'cannot grant rds_iam to % WITH INHERIT FALSE, SET FALSE: % has no ADMIN OPTION on rds_iam. Run this script as the RDS master user', '__ROLE__', current_user;
+      END;
+    END IF;
   ELSIF NOT pg_has_role('__ROLE__', 'rds_iam', 'MEMBER') THEN
     EXECUTE 'GRANT rds_iam TO "__ROLE__"';
   END IF;
@@ -484,20 +518,120 @@ BEGIN
   LOOP
     tainted_rels := tainted_rels || r.v; taint_root := taint_root || r.root; taint_why := taint_why || r.root;
   END LOOP;
-  -- e. A materialized view stores what its query returned when the OWNER last refreshed it, so
-  --    every function it calls ran with the owner's rights: one outside pg_catalog, or a
-  --    built-in that reads data by name (query_to_xml, lo_get, ...), taints it. Built-ins are
-  --    pinned and pg_depend does not record them, so the function oids come from the stored rule.
-  --    Plain views are not affected: functions in them run as the caller.
+  -- e. A materialized view stores what its query returned when the OWNER last refreshed it. Every
+  --    function in it ran with the owner's rights, and so did every function in each view it
+  --    reads, directly or through other views; a catalog view that filters rows by the caller
+  --    (pg_stats, pg_stats_ext, pg_stat_activity, information_schema, ...) returned the owner's
+  --    rows; a table with row-level security returned the rows the owner may see. Walk the whole
+  --    tree. Catalogs and built-ins are pinned and pg_depend does not record them, so relations,
+  --    functions and operators come from each stored rule. Fail closed: the matview is withheld
+  --    when the tree reaches
+  --      - a pg_catalog / information_schema relation, except a few plain catalog tables the role
+  --        can read in full itself (every caller sees the same rows there);
+  --      - a table with row-level security;
+  --      - a function outside pg_catalog, a built-in that reads data by name, or any other
+  --        built-in that is not immutable, except a short list of clock, date/time, formatting
+  --        and JSON builders. Functions behind operators (also in row comparisons), behind a
+  --        type conversion through text (the types' input/output functions), behind a subscript
+  --        (the type's subscript handler) and in a domain's CHECK count too. Extension functions
+  --        and operators (citext, pg_trgm, ...) are outside pg_catalog: such a matview is
+  --        withheld too, since nothing tells what they read.
+  --    A plain view's functions run as the caller, but it reads its tables with its OWNER's
+  --    rights, row-level security included (an owner without FORCE ROW LEVEL SECURITY sees every
+  --    row): a view whose tree reaches a table with row-level security is withheld too, unless it
+  --    is security_invoker (PostgreSQL 15+). A security_invoker view over such a view is
+  --    withheld through it (rule d).
   FOR r IN
-    SELECT DISTINCT ON (rw.ev_class) rw.ev_class AS v,
-           format('calls function %s (a materialized view stores what it returned when the owner refreshed it)', CASE WHEN pn.nspname = 'pg_catalog' THEN 'pg_catalog.' ELSE '' END || p.oid::regprocedure::text) AS root
-      FROM pg_rewrite rw JOIN pg_class mv ON mv.oid = rw.ev_class,
-           regexp_matches(rw.ev_action::text, ':(funcid|opfuncid|aggfnoid|winfnoid) ([0-9]+)', 'g') f
-      JOIN pg_proc p ON p.oid = f[2]::oid JOIN pg_namespace pn ON pn.oid = p.pronamespace
-     WHERE rw.ev_type = '1' AND mv.relkind = 'm' AND NOT rw.ev_class = ANY (tainted_rels)
-       AND (pn.nspname <> 'pg_catalog' OR p.proname ~ '^((query|cursor|table|schema|database)_to_xml|ts_(stat|rewrite)$|lo_|pg_read_|pg_ls_|pg_stat_file$|pg_stat_get_activity$|current_setting$|dblink|crosstab|xpath_table$)')
-     ORDER BY rw.ev_class, (pn.nspname = 'pg_catalog'), p.oid
+    WITH RECURSIVE tree(mv, rel, via) AS (
+      SELECT c.oid, c.oid, c.oid FROM pg_class c
+       WHERE c.relkind = 'm'
+          OR (c.relkind = 'v' AND NOT coalesce((SELECT bool_or(o ~* '^security_invoker=(t|tr|tru|true|y|ye|yes|on|1)$') FROM unnest(c.reloptions) o), false))
+      UNION
+      SELECT t.mv, f[1]::oid, t.rel
+        FROM tree t
+        JOIN pg_class c ON c.oid = t.rel AND c.relkind IN ('v','m')
+        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        JOIN pg_rewrite rw ON rw.ev_class = c.oid AND rw.ev_type = '1',
+        regexp_matches(rw.ev_action::text, ':relid ([0-9]+)', 'g') f
+       WHERE f[1]::oid <> c.oid
+    ), mvtree AS (
+      SELECT t.* FROM tree t JOIN pg_class m ON m.oid = t.mv AND m.relkind = 'm'
+    ), why AS (
+      SELECT t.mv, t.via, 1 AS o, format('reads %I.%I', tn.nspname, tc.relname) AS what
+        FROM mvtree t JOIN pg_class tc ON tc.oid = t.rel JOIN pg_namespace tn ON tn.oid = tc.relnamespace
+       WHERE tn.nspname IN ('pg_catalog', 'information_schema')
+         AND NOT (tn.nspname = 'pg_catalog' AND tc.relkind = 'r' AND has_table_privilege(role_name, tc.oid, 'SELECT')
+                  AND tc.relname IN ('pg_namespace','pg_class','pg_attribute','pg_type','pg_index','pg_constraint','pg_inherits','pg_description','pg_enum'))
+      UNION ALL
+      SELECT t.mv, t.via, 2, format('reads %s, which has row-level security', tc.oid::regclass)
+        FROM tree t JOIN pg_class tc ON tc.oid = t.rel
+       WHERE tc.relkind IN ('r','p') AND tc.relrowsecurity
+      UNION ALL
+      SELECT t.mv, t.rel, 3, format('calls function %s', CASE WHEN pn.nspname = 'pg_catalog' THEN 'pg_catalog.' ELSE '' END || p.oid::regprocedure::text)
+        FROM mvtree t
+        JOIN pg_class c ON c.oid = t.rel AND c.relkind IN ('v','m')
+        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        JOIN pg_rewrite rw ON rw.ev_class = c.oid AND rw.ev_type = '1',
+        LATERAL (SELECT f[2]::oid AS fn FROM regexp_matches(rw.ev_action::text, ':(funcid|opfuncid|aggfnoid|winfnoid) ([0-9]+)', 'g') f
+                 UNION
+                 SELECT o.oprcode::oid FROM regexp_matches(rw.ev_action::text, ':(opno|sortop|eqop) ([0-9]+)', 'g') g
+                   JOIN pg_operator o ON o.oid = g[2]::oid
+                 UNION
+                 SELECT o.oprcode::oid FROM regexp_matches(rw.ev_action::text, ':opnos [(]o ([0-9 ]+)[)]', 'g') l,
+                   unnest(string_to_array(l[1], ' ')) u JOIN pg_operator o ON o.oid = u::oid
+                 UNION
+                 SELECT CASE WHEN k[1] IN ('opno', 'sortop', 'eqop') THEN (SELECT o.oprcode::oid FROM pg_operator o WHERE o.oid = k[2]::oid) ELSE k[2]::oid END
+                   FROM regexp_matches(rw.ev_action::text, ':resulttype ([0-9]+)', 'g') dt
+                   JOIN pg_constraint dc ON dc.contypid = dt[1]::oid AND dc.conbin IS NOT NULL,
+                   regexp_matches(dc.conbin::text, ':(funcid|opfuncid|opno) ([0-9]+)', 'g') k
+                  WHERE rw.ev_action::text ~ '[{]COERCETODOMAIN ') x
+        JOIN pg_proc p ON p.oid = x.fn JOIN pg_namespace pn ON pn.oid = p.pronamespace
+       WHERE pn.nspname <> 'pg_catalog'
+          OR p.proname ~ '^((query|cursor|table|schema|database)_to_xml|ts_(stat|rewrite)$|lo_|pg_read_|pg_ls_|pg_stat_file$|pg_stat_get_activity$|current_setting$|dblink|crosstab|xpath_table$)'
+          OR (p.provolatile <> 'i' AND p.proname !~ '^(now|transaction_timestamp|statement_timestamp|clock_timestamp|timeofday|random|gen_random_uuid|date_trunc|date_part|date_bin|extract|to_char|to_timestamp|to_date|age|timezone|generate_series|concat|concat_ws|format|array_to_string|to_json|to_jsonb|row_to_json|array_to_json|json_build_object|json_build_array|jsonb_build_object|jsonb_build_array|json_object_agg|jsonb_object_agg|json_agg|jsonb_agg|textanycat|anytextcat|date|timestamptz|timestamp|time|timetz|(timestamptz|timestamp|date|time|timetz|interval)_[a-z0-9_]+)$')
+      UNION ALL
+      -- A conversion through text (CoerceViaIO) runs the input/output functions of the types
+      -- involved; the node does not say which, so every type the rule names counts (with its
+      -- element, base, range subtype and column types).
+      SELECT t.mv, t.rel, 4, format('converts values through text with type %s, whose input/output functions are outside pg_catalog', bt.top::regtype)
+        FROM mvtree t
+        JOIN pg_class c ON c.oid = t.rel AND c.relkind IN ('v','m')
+        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        JOIN pg_rewrite rw ON rw.ev_class = c.oid AND rw.ev_type = '1' AND rw.ev_action::text ~ '[{]COERCEVIAIO ',
+        LATERAL (WITH RECURSIVE ty(oid, top) AS (
+                   SELECT m[1]::oid, m[1]::oid FROM regexp_matches(rw.ev_action::text, ':[a-z_]*type ([0-9]+)', 'g') m
+                   UNION
+                   SELECT x.oid, ty.top
+                     FROM ty JOIN pg_type y ON y.oid = ty.oid,
+                     LATERAL (SELECT y.typelem UNION SELECT y.typbasetype
+                              UNION SELECT rg.rngsubtype FROM pg_range rg WHERE rg.rngtypid = y.oid
+                              UNION SELECT a.atttypid FROM pg_attribute a WHERE a.attrelid = y.typrelid AND a.attnum > 0) x(oid)
+                    WHERE x.oid <> 0)
+                 SELECT DISTINCT ty.top FROM ty JOIN pg_type y ON y.oid = ty.oid
+                  WHERE EXISTS (SELECT 1 FROM pg_namespace pn JOIN pg_proc tp ON tp.pronamespace = pn.oid
+                                 WHERE tp.oid = ANY (ARRAY[y.typinput, y.typoutput, y.typreceive, y.typsend]::oid[])
+                                   AND pn.nspname <> 'pg_catalog')) bt
+      UNION ALL
+      -- A subscript runs the container type's subscript handler (PostgreSQL 14+; regproc prints
+      -- schema-qualified when the handler is outside pg_catalog, the pinned search_path).
+      SELECT t.mv, t.rel, 5, format('subscripts type %s, whose subscript handler is outside pg_catalog', y.oid::regtype)
+        FROM mvtree t
+        JOIN pg_class c ON c.oid = t.rel AND c.relkind IN ('v','m')
+        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        JOIN pg_rewrite rw ON rw.ev_class = c.oid AND rw.ev_type = '1',
+        regexp_matches(rw.ev_action::text, ':refcontainertype ([0-9]+)', 'g') sr
+        JOIN pg_type y ON y.oid = sr[1]::oid
+       WHERE (to_jsonb(y) ->> 'typsubscript') ~ '[.]'
+    )
+    SELECT DISTINCT ON (w.mv) w.mv AS v,
+           w.what || CASE WHEN w.via <> w.mv THEN ' through view ' || w.via::regclass::text ELSE '' END
+             || CASE WHEN (SELECT relkind FROM pg_class WHERE oid = w.mv) = 'm'
+                     THEN ' (a materialized view stores what it returned when the owner refreshed it'
+                          || CASE WHEN w.o >= 3 THEN '; functions outside pg_catalog, extension ones included, may read anything the owner can' ELSE '' END || ')'
+                     ELSE ' (a view reads its tables with its owner''s rights; only a security_invoker view, PostgreSQL 15+, reads them as the caller)' END AS root
+      FROM why w
+     WHERE NOT w.mv = ANY (tainted_rels)
+     ORDER BY w.mv, w.o, w.what
   LOOP
     tainted_rels := tainted_rels || r.v; taint_root := taint_root || r.root; taint_why := taint_why || r.root;
   END LOOP;
@@ -523,6 +657,25 @@ BEGIN
       JOIN pg_class t ON t.oid = d.refobjid
      WHERE d.classid = 'pg_rewrite'::regclass AND d.refclassid = 'pg_class'::regclass AND rw.ev_type = '1'
        AND rw.ev_class <> d.refobjid AND t.relkind = 'f' AND NOT rw.ev_class = ANY (tainted_rels)
+     ORDER BY rw.ev_class, d.refobjid
+  LOOP
+    tainted_rels := tainted_rels || r.v; taint_root := taint_root || r.root; taint_why := taint_why || r.root;
+  END LOOP;
+  -- g. A view reading a relation in a listed schema that the role is not granted (a sequence
+  --    owned by a hidden column: its last_value tells the latest value) reads it with the view
+  --    owner's rights. Tables with hidden columns (rules a, b), views (rule d) and foreign tables
+  --    are handled apart; the grants for tables and sequences are already in place here.
+  FOR r IN
+    SELECT DISTINCT ON (rw.ev_class) rw.ev_class AS v,
+           format('reads %s, which the role is not granted%s', d.refobjid::regclass,
+                  CASE WHEN t.relkind = 'S' THEN ' (a sequence owned by a hidden column)' ELSE '' END) AS root
+      FROM pg_depend d JOIN pg_rewrite rw ON rw.oid = d.objid
+      JOIN pg_class t ON t.oid = d.refobjid JOIN pg_namespace tn ON tn.oid = t.relnamespace
+     WHERE d.classid = 'pg_rewrite'::regclass AND d.refclassid = 'pg_class'::regclass AND rw.ev_type = '1'
+       AND rw.ev_class <> d.refobjid AND NOT rw.ev_class = ANY (tainted_rels)
+       AND tn.nspname = ANY (schemas) AND t.relkind IN ('r','p','S') AND NOT t.oid = ANY (hidden_rels)
+       AND NOT CASE WHEN t.relkind = 'S' THEN has_sequence_privilege(role_name, t.oid, 'SELECT')
+                    ELSE has_table_privilege(role_name, t.oid, 'SELECT') END
      ORDER BY rw.ev_class, d.refobjid
   LOOP
     tainted_rels := tainted_rels || r.v; taint_root := taint_root || r.root; taint_why := taint_why || r.root;
@@ -648,15 +801,17 @@ BEGIN
   END IF;
   -- Self-check 5c: no write privilege anywhere, whoever granted it. With read-only turned off the
   -- role could use any of them: INSERT/UPDATE/DELETE/TRUNCATE/TRIGGER (MAINTAIN on 17+) on a
-  -- relation, USAGE/UPDATE on a sequence (nextval, setval).
+  -- relation, INSERT/UPDATE on a single column (has_table_privilege does not see column grants),
+  -- USAGE/UPDATE on a sequence (nextval, setval).
   SELECT string_agg(c.oid::regclass::text, ', ' ORDER BY 1) INTO msg
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname !~ '^pg_(toast|temp)'
      AND CASE WHEN c.relkind = 'S' THEN has_sequence_privilege(role_name, c.oid, 'USAGE, UPDATE')
               WHEN c.relkind IN ('r','p','v','m','f') THEN has_table_privilege(role_name, c.oid, write_privs)
+                                                        OR has_any_column_privilege(role_name, c.oid, 'INSERT, UPDATE')
               ELSE false END;
   IF msg IS NOT NULL THEN
-    RAISE EXCEPTION 'self-check failed: % could write (%, or USAGE/UPDATE on a sequence) to: %. These come from PUBLIC or another grantor: revoke them (REVOKE ... FROM PUBLIC), then re-run', role_name, write_privs, msg;
+    RAISE EXCEPTION 'self-check failed: % could write (%, INSERT/UPDATE on a column, or USAGE/UPDATE on a sequence) to: %. These come from PUBLIC or another grantor: revoke them (REVOKE ... FROM PUBLIC; a column grant needs REVOKE INSERT (col), UPDATE (col) ON ... FROM PUBLIC), then re-run', role_name, write_privs, msg;
   END IF;
   -- Self-check 5d: large objects. SELECT on one is a read this script does not control.
   IF current_setting('lo_compat_privileges') = 'on' THEN
@@ -667,6 +822,63 @@ BEGIN
    WHERE a.grantee IN (0, role_oid);
   IF msg <> '0' THEN
     RAISE EXCEPTION 'self-check failed: % large object privilege(s) are granted to PUBLIC or %: see SELECT oid, lomacl FROM pg_largeobject_metadata and revoke them', msg, role_name;
+  END IF;
+  -- Self-check 5e: foreign servers. USAGE on a server (or on a wrapper, to create one) and a user
+  -- mapping for the role or PUBLIC let dblink / postgres_fdw connect with stored credentials and
+  -- read whatever that login reads, hidden columns included.
+  SELECT string_agg(x, '; ' ORDER BY x) INTO msg FROM (
+    SELECT format('USAGE on foreign server %I', s.srvname) AS x FROM pg_foreign_server s WHERE has_server_privilege(role_name, s.oid, 'USAGE')
+    UNION ALL
+    SELECT format('USAGE on foreign-data wrapper %I', w.fdwname) FROM pg_foreign_data_wrapper w WHERE has_foreign_data_wrapper_privilege(role_name, w.oid, 'USAGE')
+    UNION ALL
+    SELECT format('user mapping for %s on server %I', CASE WHEN u.umuser = 0 THEN 'PUBLIC' ELSE quote_ident(role_name) END, u.srvname)
+      FROM pg_user_mappings u WHERE u.umuser IN (0, role_oid)) q;
+  IF msg IS NOT NULL THEN
+    RAISE EXCEPTION 'self-check failed: % can reach foreign servers: %. Revoke it (REVOKE USAGE ON FOREIGN SERVER s FROM PUBLIC, %; DROP USER MAPPING FOR PUBLIC SERVER s), then re-run', role_name, msg, quote_ident(role_name);
+  END IF;
+  -- Self-check 5f: default privileges for PUBLIC. A table, sequence or schema created later would
+  -- be readable (or writable) at once, before anyone reviews its columns. Functions and types are
+  -- EXECUTE / USAGE to PUBLIC by Postgres' own default; only those two entries are expected.
+  SELECT string_agg(DISTINCT format('%s on %s%s (set by %s)', a.privilege_type,
+           CASE d.defaclobjtype WHEN 'r' THEN 'tables' WHEN 'S' THEN 'sequences' WHEN 'f' THEN 'functions' WHEN 'T' THEN 'types' WHEN 'n' THEN 'schemas' ELSE d.defaclobjtype::text END,
+           CASE WHEN d.defaclnamespace = 0 THEN '' ELSE ' in schema ' || quote_ident((SELECT nspname FROM pg_namespace WHERE oid = d.defaclnamespace)) END,
+           pg_get_userbyid(d.defaclrole)), '; ') INTO msg
+    FROM pg_default_acl d, aclexplode(d.defaclacl) a
+   WHERE a.grantee = 0
+     AND NOT (d.defaclobjtype = 'f' AND a.privilege_type = 'EXECUTE')
+     AND NOT (d.defaclobjtype = 'T' AND a.privilege_type = 'USAGE');
+  IF msg IS NOT NULL THEN
+    RAISE EXCEPTION 'self-check failed: default privileges grant PUBLIC (so %) access to every new object: %. See \ddp; as that owner run ALTER DEFAULT PRIVILEGES [IN SCHEMA s] REVOKE ALL ON TABLES FROM PUBLIC (or SEQUENCES / SCHEMAS), then re-run', role_name, msg;
+  END IF;
+  -- Self-check 5g: system catalogs as a fresh cluster set them up. pg_init_privs holds the
+  -- privileges initdb gave each pg_catalog object (a NULL there means Postgres' default);
+  -- information_schema relations are SELECT to PUBLIC. Any other grant to PUBLIC or the role
+  -- (SELECT on pg_statistic, pg_authid or pg_largeobject, EXECUTE on pg_read_file, ...) opens
+  -- what the hidden list and the grants above close.
+  SELECT string_agg(DISTINCT x, ', ') INTO msg FROM (
+    SELECT format('%s on %s.%I%s to %s', a.privilege_type, cn.nspname, c.relname,
+                  CASE WHEN o.sub = 0 THEN '' ELSE format(' (%I)', (SELECT attname FROM pg_attribute WHERE attrelid = c.oid AND attnum = o.sub)) END,
+                  CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(role_name) END) AS x
+      FROM pg_class c JOIN pg_namespace cn ON cn.oid = c.relnamespace,
+           LATERAL (SELECT 0::int2 AS sub, c.relacl AS acl, acldefault(CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END::"char", c.relowner) AS dflt
+                    UNION ALL
+                    SELECT pa.attnum, pa.attacl, NULL::aclitem[] FROM pg_attribute pa WHERE pa.attrelid = c.oid AND pa.attnum > 0 AND pa.attacl IS NOT NULL) o,
+           aclexplode(o.acl) a
+     WHERE cn.nspname IN ('pg_catalog', 'information_schema') AND a.grantee IN (0, role_oid)
+       AND NOT (cn.nspname = 'information_schema' AND a.grantee = 0 AND a.privilege_type = 'SELECT' AND o.sub = 0)
+       AND NOT EXISTS (SELECT 1 FROM aclexplode(coalesce((SELECT i.initprivs FROM pg_init_privs i
+                                                           WHERE i.classoid = 'pg_class'::regclass AND i.objoid = c.oid AND i.objsubid = o.sub), o.dflt)) b
+                        WHERE b.grantee = a.grantee AND b.privilege_type = a.privilege_type)
+    UNION ALL
+    SELECT format('%s on function %s to %s', a.privilege_type, p.oid::regprocedure, CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(role_name) END)
+      FROM pg_proc p JOIN pg_namespace pn ON pn.oid = p.pronamespace, aclexplode(p.proacl) a
+     WHERE pn.nspname IN ('pg_catalog', 'information_schema') AND a.grantee IN (0, role_oid)
+       AND NOT EXISTS (SELECT 1 FROM aclexplode(coalesce((SELECT i.initprivs FROM pg_init_privs i
+                                                           WHERE i.classoid = 'pg_proc'::regclass AND i.objoid = p.oid AND i.objsubid = 0),
+                                                          acldefault('f', p.proowner))) b
+                        WHERE b.grantee = a.grantee AND b.privilege_type = a.privilege_type)) q;
+  IF msg IS NOT NULL THEN
+    RAISE EXCEPTION 'self-check failed: system catalog privileges beyond a fresh cluster''s: %. Revoke each (e.g. REVOKE SELECT ON pg_catalog.pg_statistic FROM PUBLIC), then re-run', msg;
   END IF;
   -- Self-check 6: SECURITY DEFINER functions run as their owner and bypass every grant above.
   -- PUBLIC can EXECUTE every function by default, so the role can call them too, in ANY schema:
@@ -749,12 +961,57 @@ SELECT n.nspname AS schema, pg_get_userbyid(c.relowner) AS owner, c.relkind AS k
  GROUP BY 1, 2, 3 ORDER BY 1, 4 DESC;
 
 -- 6. Once more, just before COMMIT: the role still owns nothing and belongs to nothing (it could
---    have created an object or been granted a role while this transaction ran).
+--    have created an object or been granted a role while this transaction ran), holds none of
+--    the five dangerous attributes, and its rds_iam membership reaches nothing.
 DO $$
 DECLARE
   role_oid oid := (SELECT oid FROM pg_roles WHERE rolname = '__ROLE__');
+  iam_oid  oid := (SELECT oid FROM pg_roles WHERE rolname = 'rds_iam');
   msg text;
 BEGIN
+  SELECT concat_ws(', ', CASE WHEN rolsuper THEN 'SUPERUSER' END, CASE WHEN rolreplication THEN 'REPLICATION' END,
+                         CASE WHEN rolbypassrls THEN 'BYPASSRLS' END, CASE WHEN rolcreatedb THEN 'CREATEDB' END,
+                         CASE WHEN rolcreaterole THEN 'CREATEROLE' END)
+    INTO msg FROM pg_roles WHERE oid = role_oid;
+  IF msg <> '' THEN
+    RAISE EXCEPTION 'self-check failed: role % still has %: as a superuser run ALTER ROLE % WITH NOSUPERUSER NOREPLICATION NOBYPASSRLS NOCREATEDB NOCREATEROLE; then re-run',
+      '__ROLE__', msg, quote_ident('__ROLE__');
+  END IF;
+  IF iam_oid IS NOT NULL AND pg_has_role('__ROLE__', 'rds_iam', 'MEMBER') THEN
+    IF current_setting('server_version_num')::int >= 160000 THEN
+      -- IAM login needs the membership only: no SET, INHERIT or ADMIN on any grant of it.
+      SELECT string_agg(format('granted by %s with %s', pg_get_userbyid(m.grantor),
+                               concat_ws(', ', CASE WHEN m.set_option THEN 'SET' END, CASE WHEN m.inherit_option THEN 'INHERIT' END,
+                                               CASE WHEN m.admin_option THEN 'ADMIN' END)), '; ') INTO msg
+        FROM pg_auth_members m WHERE m.roleid = iam_oid AND m.member = role_oid AND (m.set_option OR m.inherit_option OR m.admin_option);
+      IF msg IS NOT NULL THEN
+        RAISE EXCEPTION 'self-check failed: role % can use the privileges of rds_iam (%): IAM login needs only the membership. Have that grantor run: REVOKE rds_iam FROM %; then re-run (it grants rds_iam WITH INHERIT FALSE, SET FALSE)',
+          '__ROLE__', msg, quote_ident('__ROLE__');
+      END IF;
+    ELSE
+      -- Before PostgreSQL 16 a member can always SET ROLE rds_iam, so rds_iam itself must hold
+      -- nothing: no privilege or default privilege on any object, no owned object or user
+      -- mapping (pg_shdepend, every database), no membership in another role, no attribute.
+      SELECT string_agg(x, '; ' ORDER BY x) INTO msg FROM (
+        SELECT CASE WHEN d.dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) OR d.dbid = 0
+                    THEN CASE d.deptype WHEN 'o' THEN 'owns ' ELSE 'is named in the privileges of ' END || pg_describe_object(d.classid, d.objid, d.objsubid)
+                    ELSE format('%s an object in database %s', CASE d.deptype WHEN 'o' THEN 'owns' ELSE 'has privileges on' END,
+                                (SELECT quote_ident(datname) FROM pg_database WHERE oid = d.dbid)) END AS x
+          FROM pg_shdepend d WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = iam_oid
+        UNION ALL
+        SELECT 'is a member of ' || quote_ident(r.rolname) FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid WHERE m.member = iam_oid
+        UNION ALL
+        SELECT 'has attribute ' || a FROM pg_roles r,
+               unnest(ARRAY[CASE WHEN r.rolsuper THEN 'SUPERUSER' END, CASE WHEN r.rolreplication THEN 'REPLICATION' END,
+                            CASE WHEN r.rolbypassrls THEN 'BYPASSRLS' END, CASE WHEN r.rolcreatedb THEN 'CREATEDB' END,
+                            CASE WHEN r.rolcreaterole THEN 'CREATEROLE' END]) a
+         WHERE r.oid = iam_oid AND a IS NOT NULL) q;
+      IF msg IS NOT NULL THEN
+        RAISE EXCEPTION 'self-check failed: role % is a member of rds_iam and, before PostgreSQL 16, can SET ROLE rds_iam; rds_iam must hold nothing, but it: %. Revoke those from rds_iam, then re-run',
+          '__ROLE__', msg;
+      END IF;
+    END IF;
+  END IF;
   SELECT string_agg(pg_describe_object(d.classid, d.objid, d.objsubid), '; ' ORDER BY pg_describe_object(d.classid, d.objid, d.objsubid)) INTO msg
     FROM pg_shdepend d
    WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = role_oid AND d.deptype = 'o'

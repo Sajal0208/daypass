@@ -1,25 +1,41 @@
 ---
 import Landing from '../layouts/Landing.astro';
 import InstallSnippet from '../components/InstallSnippet.astro';
+import HeroTerminal from '../components/HeroTerminal.astro';
+import Steps from '../components/Steps.astro';
 import FlowDiagram from '../components/FlowDiagram.astro';
 import LayerTable from '../components/LayerTable.astro';
+import NotCovered from '../components/NotCovered.astro';
 import TerminalDemo from '../components/TerminalDemo.astro';
-import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
+import Comparison from '../components/Comparison.astro';
+import Faq from '../components/Faq.astro';
+import { installCommand, repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 ---
 
 <Landing title={siteTitle} description={siteDescription}>
 	<section class="hero">
-		<div class="land-wrap">
-			<h1>Temporary, read-only, audited database access for AI coding agents.</h1>
-			<p class="tagline">
-				The tools never hand the agent a password, every statement runs read-only as a role with no
-				write privilege, and every query is logged with who, why, what, how many rows and how long.
-			</p>
-			<div class="actions">
-				<a class="land-btn land-btn-primary" href="/docs/quickstart/">Quickstart</a>
-				<a class="land-btn land-btn-secondary" href={repoUrl}>GitHub</a>
+		<div class="land-wrap hero-grid">
+			<div class="hero-copy">
+				<p class="eyebrow">Open-source CLI + MCP server · Postgres · MIT</p>
+				<h1>Temporary, read-only, audited database access for AI coding agents.</h1>
+				<p class="tagline">
+					You open a lease with a reason and a TTL. Claude Code (or any MCP client) gets
+					<code>SELECT</code>-only tools on your Postgres, as a role that holds no write
+					privilege and no grant on the columns you hid, until the lease expires. Every call is
+					logged.
+				</p>
+				<InstallSnippet command={installCommand} />
+				<div class="actions">
+					<a class="land-btn land-btn-primary" href="/docs/quickstart/">Quickstart</a>
+					<a class="land-btn land-btn-secondary" href={repoUrl}>GitHub</a>
+				</div>
+				<p class="works-with">
+					Works with Claude Code and any MCP client (stdio). Needs Node 20 or newer.
+				</p>
 			</div>
-			<InstallSnippet command="npm install -g daypass" />
+			<div class="hero-demo">
+				<HeroTerminal />
+			</div>
 		</div>
 	</section>
 
@@ -27,10 +43,9 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 		<div class="land-wrap">
 			<h2 id="how">How it works</h2>
 			<p class="land-lead">
-				You open a lease: <code>daypass open prod --ttl 45m --reason "..."</code>. For that
-				time the agent can run <code>SELECT</code>s on your Postgres through five MCP tools.
-				Then the door shuts on its own.
+				A lease, a parser, a database role and an audit line. Then the door shuts on its own.
 			</p>
+			<Steps />
 			<FlowDiagram />
 		</div>
 	</section>
@@ -39,6 +54,7 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 		<div class="land-wrap">
 			<h2 id="safe">Why it is safe</h2>
 			<LayerTable />
+			<NotCovered />
 		</div>
 	</section>
 
@@ -55,31 +71,8 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 	<section class="land-section" aria-labelledby="why-not">
 		<div class="land-wrap">
 			<h2 id="why-not">Why not just give the agent the DB URL?</h2>
-			<div class="land-prose">
-			<ul>
-				<li>
-					<strong>The password lands in context and config forever.</strong> It sits in <code>.mcp.json</code>, in the chat transcript, in whatever the client logs. Rotating
-					it later means finding every copy.
-				</li>
-				<li>
-					<strong>Nothing expires.</strong> Access granted for one debugging session is still
-					there next month.
-				</li>
-				<li>
-					<strong>Writes are possible.</strong> A URL to the application user can <code>UPDATE</code>, <code>DELETE</code> and <code>DROP</code>. One wrong tool call, or
-					one row of injected text that reads like an instruction, is enough.
-				</li>
-				<li>
-					<strong>PII flows into the model.</strong> <code>SELECT * FROM users</code> ships
-					every email, phone and token to the model provider, and into the transcript.
-				</li>
-				<li>
-					<strong>Nobody can say afterwards what was read.</strong> No log ties a query to a
-					person and a reason.
-				</li>
-			</ul>
-			<p>Daypass replaces the URL with a lease, a role, a parser and an audit line.</p>
-			</div>
+			<p class="land-lead">The same five points, with and without Daypass.</p>
+			<Comparison />
 		</div>
 	</section>
 
@@ -88,8 +81,9 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 			<h2 id="plugin">Claude Code plugin</h2>
 			<div class="land-prose">
 			<p>
-				The plugin bundles the MCP server, so you skip <code>claude mcp add</code>. Two commands
-				inside Claude Code, and the tools are there the next time a lease is open. Any other MCP
+				The plugin registers the MCP server, so you skip <code>claude mcp add</code>. It runs the
+				<code>daypass</code> command from your <code>PATH</code>, so install it with npm first. Two
+				commands inside Claude Code, and the tools are there the next time a lease is open. Any other MCP
 				client works too: the command is <code>daypass mcp</code> over stdio.
 			</p>
 			<pre class="land-code"><code>/plugin marketplace add Sajal0208/daypass
@@ -98,31 +92,109 @@ import { repoUrl, siteDescription, siteTitle } from '../lib/meta.ts';
 			</div>
 		</div>
 	</section>
+
+	<section class="land-section" aria-labelledby="faq">
+		<div class="land-wrap">
+			<h2 id="faq">Questions</h2>
+			<Faq />
+		</div>
+	</section>
+
+	<section class="land-section cta" aria-labelledby="cta">
+		<div class="land-wrap">
+			<div class="cta-box">
+				<h2 id="cta">Hand the agent a day pass, not the database URL.</h2>
+				<p class="land-lead">
+					Install to first question in five minutes. Postgres only; one-time role setup as the
+					database owner, then <code>daypass open</code> whenever the agent needs to read.
+				</p>
+				<InstallSnippet command={installCommand} />
+				<div class="actions">
+					<a class="land-btn land-btn-primary" href="/docs/quickstart/">Quickstart</a>
+					<a class="land-btn land-btn-secondary" href={repoUrl}>GitHub</a>
+					<a class="land-btn land-btn-secondary" href="/docs/threat-model/">Read the threat model</a>
+				</div>
+			</div>
+		</div>
+	</section>
 </Landing>
 
 <style>
 	.hero {
-		padding-block: 3.5rem 3rem;
+		padding-block: 3rem 3rem;
+	}
+	.hero-grid {
+		display: grid;
+		gap: 2.25rem;
+		align-items: center;
+	}
+	.eyebrow {
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		letter-spacing: 0.02em;
+		color: var(--sl-color-text-accent);
+		margin-bottom: 1rem;
 	}
 	.hero h1 {
-		font-size: clamp(1.9rem, 1.2rem + 3.2vw, 3rem);
+		font-size: clamp(1.9rem, 1.2rem + 2.6vw, 2.8rem);
 		max-width: 20ch;
 	}
 	.tagline {
 		margin-top: 1.25rem;
-		max-width: 40rem;
-		font-size: 1.1rem;
+		max-width: 36rem;
+		font-size: 1.05rem;
 		color: var(--land-muted);
+	}
+	.hero :global(.install) {
+		margin-top: 1.75rem;
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.75rem;
-		margin-block: 1.75rem 1.25rem;
+		margin-block: 1rem 0;
+	}
+	.works-with {
+		margin-top: 1rem;
+		font-size: 0.875rem;
+		color: var(--land-muted);
+	}
+	.hero-demo {
+		min-width: 0;
+	}
+	.cta-box {
+		max-width: 56rem;
+		padding: 2rem 1.25rem;
+		border: 1px solid var(--sl-color-hairline-light);
+		border-radius: 1rem;
+		background: var(--sl-color-bg-nav);
+	}
+	.cta-box h2 {
+		font-size: 1.5rem;
+		max-width: 24ch;
+		margin-bottom: 0.75rem;
+	}
+	.cta-box :global(.install) {
+		margin-top: 0.25rem;
+	}
+	.cta-box .land-lead {
+		margin-bottom: 1.5rem;
 	}
 	@media (min-width: 50em) {
 		.hero {
-			padding-block: 5.5rem 4.5rem;
+			padding-block: 4.5rem 4rem;
+		}
+		.cta-box {
+			padding: 2.75rem 2.5rem;
+		}
+		.cta-box h2 {
+			font-size: 1.75rem;
+		}
+	}
+	@media (min-width: 62em) {
+		.hero-grid {
+			grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+			gap: 3rem;
 		}
 	}
 </style>

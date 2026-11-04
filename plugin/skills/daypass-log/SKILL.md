@@ -11,9 +11,12 @@ argument-hint: "[N]"
 `-n`, so never pass an empty argument):
 
 ```bash
-daypass log -n 20            # when $ARGUMENTS is empty
-daypass log -n $ARGUMENTS    # when the user gave a number
+daypass log -n 20              # when $ARGUMENTS is empty
+daypass log -n "$ARGUMENTS"    # when the user gave a number
 ```
+
+If `$ARGUMENTS` is anything other than a whole number, do not put it on the command line: use
+`-n 20` and say so.
 
 `daypass log` prints one row per call: the server writes a start and an end line for each allowed
 call, and the CLI pairs them by call id into one row at the start time with the end's result.
@@ -48,7 +51,10 @@ Say when fewer than N rows exist. Report, in this order:
 hex/base64 tokens, card or id numbers. The audit log stores SQL as sent, so these literals are in the
 file; keep them out of the transcript. Describe the query instead: "a query on users filtering by
 phone", "a lookup on api_keys by key_hash". SQL with only ids, dates, statuses and counts may be
-quoted, and the `<- reason` text is always safe to quote. When unsure, describe.
+quoted. The `<- reason` text follows the same rule: a guard refusal (`not a SELECT`, `lease expired`)
+may be quoted, but a database error can carry the values it choked on (`invalid input syntax for type
+integer: "+49 151 ..."`, a failing key in `duplicate key value`), so describe those. When unsure,
+describe.
 
-Read-only: this command never runs `daypass open`/`close`, never edits `audit.jsonl`, and never
-re-runs a query from the log.
+Read-only: this command never runs `daypass open`/`close`, never reads or edits `audit.jsonl`
+directly (only through `daypass log`), and never re-runs a query from the log.

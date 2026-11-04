@@ -1,0 +1,92 @@
+---
+/**
+ * Five items condensed from docs/threat-model.md "Not covered". Keep the wording in step with
+ * that section; the full list is one link away.
+ */
+---
+
+<aside class="not-covered" aria-labelledby="not-covered-title">
+	<h3 id="not-covered-title">What it does not protect against</h3>
+	<p class="intro">
+		The role's grants are the wall; the lease, the parser and the caps are fences on the
+		laptop. Some things are outside all of them:
+	</p>
+	<ul>
+		<li>
+			<strong>The agent's other tools.</strong> Daypass controls the database tools only. What the
+			model does with what it learned, in files, shells or other MCP servers, is outside its scope.
+		</li>
+		<li>
+			<strong>The agent and your files.</strong> <code>config.json</code>, <code>lease.json</code>
+			and <code>audit.jsonl</code> are protected by OS user permissions only (<code>0600</code>,
+			owned by you). An agent you also allow to run shell commands as you can read a URL target's
+			password, open a lease itself or edit the lease. The plugin's hook blocks the common forms;
+			it is a fence, not a control.
+		</li>
+		<li>
+			<strong>Columns you did not list.</strong> The hidden list is yours. <code>daypass hidden
+			suggest</code> flags names that look sensitive; it does not read values. A phone number
+			stored in <code>metadata</code> is not found by anyone, and a column added to a table
+			without hidden columns is readable at once.
+		</li>
+		<li>
+			<strong>Many cheap queries can still load the database.</strong> There is no rate limit.
+			The 5-connection cap and the 10 s timeout bound each query, not the stream of them.
+		</li>
+		<li>
+			<strong>SQL text in the audit file can hold PII.</strong> <code>WHERE phone = '+4915…'</code>
+			is logged as written. The file is <code>0600</code> on the developer's laptop and is not
+			sent anywhere; treat it as sensitive.
+		</li>
+	</ul>
+	<p class="more">
+		Postgres only, no MySQL. The full list, and which layer stops each threat: <a href="/docs/threat-model/">the threat model</a>.
+	</p>
+</aside>
+
+<style>
+	.not-covered {
+		max-width: 56rem;
+		margin-top: 2rem;
+		padding: 1.25rem 1.25rem 1.25rem 1.5rem;
+		border: 1px solid var(--sl-color-hairline-light);
+		border-left: 4px solid var(--sl-color-gray-4);
+		border-radius: 0.75rem;
+		background: var(--sl-color-bg-nav);
+		font-size: 0.925rem;
+		line-height: 1.55;
+	}
+	h3 {
+		font-size: 1.15rem;
+		margin-bottom: 0.5rem;
+	}
+	.intro,
+	.more {
+		color: var(--sl-color-text);
+		max-width: 44rem;
+	}
+	ul {
+		margin: 1rem 0;
+		padding-left: 1.25rem;
+	}
+	li {
+		color: var(--sl-color-text);
+		break-inside: avoid;
+	}
+	li + li {
+		margin-top: 0.6rem;
+	}
+	li strong {
+		color: var(--sl-color-white);
+		font-weight: 600;
+	}
+	@media (min-width: 50em) {
+		.not-covered {
+			padding: 1.5rem 1.75rem 1.5rem 2rem;
+		}
+		ul {
+			columns: 2;
+			column-gap: 2rem;
+		}
+	}
+</style>

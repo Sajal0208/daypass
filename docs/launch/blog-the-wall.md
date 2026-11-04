@@ -6,7 +6,7 @@ that were wrong._
 
 ## Why we wanted it
 
-Half of our debugging questions are data questions. Why did this campaign's calls fail?
+Half of our debugging questions are data questions. Why did this order's payment fail?
 Claude Code is good at these when it can run the `SELECT` itself, and slow and wrong when
 a human copies rows into the chat.
 
@@ -47,7 +47,7 @@ GRANT SELECT (id, created_at, plan, country) ON TABLE public.users TO daypass_ro
 ```
 users.email
 users.phone
-sessions.transcript
+tickets.body
 api_keys.key_hash
 ```
 
@@ -92,10 +92,10 @@ Amazon's RDS roots. The config holds no secret:
 {
   "targets": {
     "prod": {
-      "host": "my-db.abc123.eu-central-1.rds.amazonaws.com",
+      "host": "my-db.abc123.us-east-1.rds.amazonaws.com",
       "database": "app",
       "user": "daypass_ro",
-      "region": "eu-central-1",
+      "region": "us-east-1",
       "securityGroupId": "sg-xxxxxxxxxxxxxxxxx"   // optional: per-lease IP rule
     }
   }
@@ -126,16 +126,16 @@ grants, and `daypass doctor` lists what the role can execute.
 protocol (one command), with a statement timeout of 10 s or the lease time left, whichever
 is shorter; afterwards `DISCARD ALL` resets the connection. The row cap (500) and the byte
 budget (1 MB) are applied in SQL, so Postgres does the cutting and for a query the MCP server
-holds at most the budget plus one row; cells are cut at 2000 characters.
+holds at most the budget plus one row; cells are cut at 2000 characters, in the database too.
 
-Around the layers is the lease. `daypass open prod --ttl 45m --reason "debug campaign
+Around the layers is the lease. `daypass open prod --ttl 45m --reason "debug order
 1234"` writes a lease file; every tool checks it first and refuses when it is missing or
 expired. Every allowed call appends a `start` line to `~/.daypass/audit.jsonl` before the
 query runs and an `end` line when it finishes:
 
 ```json
-{"at":"2026-10-28T14:21:07.271Z","who":"arn:aws:iam::123456789012:user/alice","leaseId":"3f9a1c2e","target":"prod","reason":"debug campaign 1234","tool":"query","sql":"select id, status, created_at from calls where campaign_id = 1234 order by created_at desc limit 50","allowed":true,"phase":"start","callId":"9b2e41d0"}
-{"at":"2026-10-28T14:21:07.312Z","who":"arn:aws:iam::123456789012:user/alice","leaseId":"3f9a1c2e","target":"prod","reason":"debug campaign 1234","tool":"query","sql":"select id, status, created_at from calls where campaign_id = 1234 order by created_at desc limit 50","allowed":true,"phase":"end","rows":50,"ms":41,"callId":"9b2e41d0"}
+{"at":"2026-10-28T14:21:07.271Z","who":"arn:aws:iam::123456789012:user/alice","leaseId":"3f9a1c2e","target":"prod","reason":"debug order 1234","tool":"query","sql":"select id, status, created_at from payments where order_id = 1234 order by created_at desc limit 50","allowed":true,"phase":"start","callId":"9b2e41d0"}
+{"at":"2026-10-28T14:21:07.312Z","who":"arn:aws:iam::123456789012:user/alice","leaseId":"3f9a1c2e","target":"prod","reason":"debug order 1234","tool":"query","sql":"select id, status, created_at from payments where order_id = 1234 order by created_at desc limit 50","allowed":true,"phase":"end","rows":50,"ms":41,"callId":"9b2e41d0"}
 ```
 
 And a successful call looks like this to the agent:
@@ -180,8 +180,9 @@ cron is the backstop.
 
 The first run against RDS failed at the `ALTER ROLE` line. The script said `NOSUPERUSER
 NOREPLICATION NOBYPASSRLS` to be explicit. The RDS master user is not a superuser, so
-even the negative form is refused. A new role never has those attributes, so the script
-no longer names them, with a comment saying why.
+even the negative form is refused. The script now names those attributes only when the
+role actually has one, removes them, and stops with the exact `ALTER ROLE` for a superuser
+when the runner cannot.
 
 ## The second wrong draft
 
@@ -247,4 +248,4 @@ we most want to hear about. SECURITY.md says how to report it privately. Please 
 open an issue for it.
 
 Code: https://github.com/Sajal0208/daypass. Package:
-https://www.npmjs.com/package/daypass. Site: <SITE_URL>.
+https://www.npmjs.com/package/daypass. Site: https://daypass-lac.vercel.app.

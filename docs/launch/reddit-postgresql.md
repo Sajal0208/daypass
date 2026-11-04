@@ -10,7 +10,7 @@ A read-only role for AI coding agents: column-level grants, timeouts, a parser a
 
 We give Claude Code a time-boxed, read-only window onto our production Postgres. The
 client side is an MCP server; the part I want this sub to look at is the role. The
-setup script is about 770 lines of SQL, most of it checks, and I would rather hear about a
+setup script is about 1,000 lines of SQL, most of it checks, and I would rather hear about a
 hole here than from an agent.
 
 Repo: https://github.com/Sajal0208/daypass. Script: `sql/setup-role.sql`. MIT.
@@ -49,14 +49,18 @@ function that read it. The current script:
 - withholds every view and materialized view whose `ON SELECT` rule depends on a hidden
   column (`pg_depend` on `pg_rewrite`), reads a whole row of such a table (a `:varattno 0`
   Var in the stored rule), reads a schema that is not listed, a foreign table or a catalog
-  the role cannot read itself, or reads a withheld view; and materialized views that call a
-  function outside `pg_catalog` or a built-in that reads data by name, because what they
-  store was computed with the owner's rights;
+  the role cannot read itself, or reads a withheld view; and materialized views whose stored
+  rows depended on the owner's rights anywhere in their view tree: a catalog view that filters
+  by caller (`pg_stats`, `pg_stat_activity`), a table with row-level security, a function
+  outside `pg_catalog`, or a non-immutable built-in outside a short clock/format/JSON list;
 - requires generated columns computed from a hidden column to be listed, and does not grant
   sequences owned by a hidden column;
 - fails its self-check if the role can execute any `SECURITY DEFINER` function (unless the
-  owner passes `--allow-definer-functions`), holds any write privilege from any grantor,
-  owns an object, belongs to another role, or can read anything outside the listed schemas;
+  owner passes `--allow-definer-functions`), holds any write privilege from any grantor
+  (column-level `INSERT`/`UPDATE` included), owns an object, belongs to another role, can read
+  anything outside the listed schemas, can reach a foreign server (server or wrapper `USAGE`,
+  a user mapping for it or `PUBLIC`), or when default privileges give `PUBLIC` new tables or
+  the system catalogs carry grants beyond a fresh cluster's (`pg_init_privs`);
 - prints a `NOTICE` for every default, `CHECK` constraint, index predicate or policy that
   mentions a hidden column, since the role can read that catalog text;
 - stops on the unpatched `pg_stats_ext` views of CVE-2024-4317.
@@ -87,13 +91,16 @@ Notes:
   large objects (no privilege needed in core), and on PG 14 and older objects in `public`.
   The script reports each and has opt-in flags to revoke `TEMP` and `CREATE` from PUBLIC; it
   does not do that by default because it would break other roles.
-- 10 s is short on purpose: Daypass reads the live primary today. Raise it once it points
-  at a replica.
-- `NOSUPERUSER`, `NOREPLICATION`, `NOBYPASSRLS` are not written out. A new role never has
-  them, and on RDS the master user is not a superuser, so even `NOSUPERUSER` is refused.
-  That was a real failure on the first RDS run.
-- On RDS the role gets `GRANT rds_iam` and logs in with a 15-minute IAM token. No
-  password is stored. On plain Postgres you set a password after the script.
+- 10 s is short on purpose: it is set for a target that is a primary. Raise it once it
+  points at a replica.
+- `NOSUPERUSER`, `NOREPLICATION`, `NOBYPASSRLS` are written out only when the role has one of
+  them: on RDS the master user is not a superuser, so even a no-op `NOSUPERUSER` is refused.
+  When they are set and the runner cannot remove them, the script stops and names the
+  `ALTER ROLE` a superuser has to run.
+- On RDS the role gets `rds_iam` and logs in with a 15-minute IAM token. On PG 16+ the grant
+  is `WITH INHERIT FALSE, SET FALSE` (membership is all IAM login checks); before 16 the
+  script requires `rds_iam` to hold nothing, since a member can `SET ROLE` to it. No password
+  is stored. On plain Postgres you set a password after the script (`\password`).
 - On PG 16+ altering the role needs ADMIN OPTION on it; the script checks and says which
   `GRANT` to run.
 
@@ -137,8 +144,9 @@ timeout stops it.
 
 After the parser: the query runs inside `BEGIN READ ONLY` over the extended protocol, with
 `SET LOCAL statement_timeout` = min(10 s, lease time left), wrapped so that each row comes
-back as `to_json` text and the row cap (500) and byte budget (1 MB, `octet_length`) are
-applied by Postgres with window aggregates. Afterwards `pg_advisory_unlock_all()` and
+back as text built from `to_json` of the row, cells cut at 2000 characters, and the row cap
+(500) and byte budget (1 MB, `octet_length` of the cut rows) are applied by Postgres with
+window aggregates. Afterwards `pg_advisory_unlock_all()` and
 `DISCARD ALL`.
 
 ### What I would like reviewed

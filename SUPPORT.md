@@ -10,7 +10,7 @@ gets a quick answer.
 | A question (how do I, does it work with, is this expected) | [GitHub Discussions](https://github.com/Sajal0208/daypass/discussions) |
 | A bug (it does not do what the docs say) | [New issue](https://github.com/Sajal0208/daypass/issues/new/choose), using the *Bug* template |
 | An idea | [New issue](https://github.com/Sajal0208/daypass/issues/new/choose), using the *Feature request* template, or a Discussion |
-| Anything that weakens the wall (hidden column readable, a write goes through, a lease bypass, a leaked credential) | **Not an issue.** Open a [private vulnerability report](https://github.com/Sajal0208/daypass/security/advisories/new) (if the form is not offered yet, email instead), or email security@vocobase.com; see [SECURITY.md](SECURITY.md) |
+| Anything that weakens the wall (hidden column readable, a write goes through, a lease bypass, a leaked credential) | **Not an issue.** Email security@vocobase.com, or open a [private vulnerability report](https://github.com/Sajal0208/daypass/security/advisories/new) once that form is offered; see [SECURITY.md](SECURITY.md) |
 
 ## What to include
 

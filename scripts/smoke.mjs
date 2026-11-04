@@ -171,15 +171,16 @@ assert.ok(!/\b(secret|email)\b/.test(r.text), 'describe_table output names no hi
 
 // F1: a 600 MB cell is cut in the database; the server neither crashes nor balloons, and audits it.
 r = await call('query', { sql: "select repeat('x', 600000000) as big" });
-assert.ok(r.ok ? /daypass_truncated_row/.test(r.text) : /failed/.test(r.text), 'huge cell: truncated row or clean error');
+assert.ok(r.ok ? /…\[\+\d+ chars\]/.test(r.text) : /failed/.test(r.text), 'huge cell: capped cell or clean error');
 [st, en] = auditTail(2);
 assert.ok(st.phase === 'start' && en.phase === 'end' && en.callId === st.callId && /repeat/.test(st.sql), 'huge cell: start + end audit lines');
 await alive('a 600 MB cell');
 r = await call('query', { sql: 'select array_agg(g) as a from generate_series(1, 20000000) g' });
-assert.ok(r.ok ? /daypass_truncated_row/.test(r.text) : /failed/.test(r.text), 'huge array: truncated row or clean error');
+assert.ok(r.ok ? /…\[\+\d+ chars\]/.test(r.text) : /failed/.test(r.text), 'huge array: capped cell or clean error');
 await alive('a 20M-element array');
 // Many rows that together exceed the byte budget: cut in SQL, the note says so.
-r = await call('query', { sql: "select g, repeat('y', 10000) as pad from generate_series(1, 400) g" });
+// Cells are capped at 2000 chars before the budget counts them, so each row needs several wide cells.
+r = await call('query', { sql: "select g, repeat('y', 10000) as a, repeat('y', 10000) as b, repeat('y', 10000) as c from generate_series(1, 400) g" });
 assert.ok(r.ok && /byte budget/.test(r.text), 'byte budget cuts rows and says so');
 
 // F2: statement_timeout is bounded by the lease: with ~3 s left a long query is cancelled well before 10 s.

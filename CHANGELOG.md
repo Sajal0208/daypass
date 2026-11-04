@@ -18,7 +18,7 @@ Security fixes from the 2026-10-30 review. **Everyone on 0.1.0: upgrade, then re
 
 ### MCP server and guard
 
-- Results are cut in the database: row cap and byte budget (UTF-8 bytes) in SQL; a row over the budget arrives as `daypass_truncated_row`; 32 MiB wire cap per call; SQL over 256 KiB refused. A huge value no longer crashes the server.
+- Results are cut in the database: row cap and byte budget (UTF-8 bytes) in SQL; a row still over the budget is left out with a note; 32 MiB wire cap per call; SQL over 256 KiB refused. A huge value no longer crashes the server.
 - Each call runs in `BEGIN READ ONLY` over the extended protocol with a statement timeout of min(10 s, lease time left), then `pg_advisory_unlock_all()` and `DISCARD ALL`. Cut-off calls are cancelled in the database; shutdown ends in-flight calls cleanly.
 - Audit: a `start` line before each allowed call and an `end` line after it, paired by `callId`; `server` lines for crashes caught and transport close. `daypass log` shows one row per call (`RUN` for a start without an end, `SRV` for server events); `-n` counts calls.
 - Guard: data-modifying CTEs refused; many more banned functions (all advisory-lock and large-object functions, `query_to_xml` and the other SQL-from-a-string functions, `setseed`, several extensions); `EXPLAIN (ANALYZE false)` allowed; trailing comments and semicolons accepted (canonical SQL is run and audited); guard errors fail closed.
@@ -30,6 +30,7 @@ Security fixes from the 2026-10-30 review. **Everyone on 0.1.0: upgrade, then re
 ### Plugin
 
 - The PII hook covers `explain` too, tokenizes quoting, dollar quoting and escapes, blocks `SELECT *`, whole-row references, SQL-from-a-string functions and planner statistics, and fails closed on Claude Code 2.1.295+.
+- The state guard also covers the `Monitor` tool, which runs a command in the same shell as `Bash`; before, a `Monitor` call could read `config.json` or run `daypass open` with no hook at all.
 
 ### Release
 

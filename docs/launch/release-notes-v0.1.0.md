@@ -105,6 +105,6 @@ within 3 working days; fix within 14 days for anything that weakens the read-onl
 See `SECURITY.md`.
 
 Links: https://github.com/Sajal0208/daypass · https://www.npmjs.com/package/daypass ·
-<SITE_URL>
+https://daypass-lac.vercel.app
 
 MIT. Built by Vocobase.

@@ -8,11 +8,11 @@ On AWS RDS, Daypass logs in without a password. The role is granted `rds_iam`, a
 {
   "targets": {
     "prod": {
-      "host": "my-db.abc123.eu-central-1.rds.amazonaws.com",
+      "host": "my-db.abc123.us-east-1.rds.amazonaws.com",
       "port": 5432,
       "database": "app",
       "user": "daypass_ro",
-      "region": "eu-central-1",
+      "region": "us-east-1",
       "awsProfile": "default",
       "securityGroupId": "sg-xxxxxxxxxxxxxxxxx",
       "schemas": ["public"],
@@ -35,7 +35,9 @@ aws rds modify-db-instance \
   --apply-immediately
 ```
 
-Then run the role setup from [Quickstart](quickstart.md) step 4 as the master user. On RDS the script finds the `rds_iam` role and grants it to `daypass_ro`; that grant is what allows token login. Do not set a password on the role. On PostgreSQL 16+, re-runs must come from the master user that created the role (it holds ADMIN OPTION on it) or a role granted `daypass_ro ... WITH ADMIN OPTION`; anyone else gets an error naming the `GRANT` to run. Set `rds.restrict_password_commands = 1` in the parameter group so the role cannot change its own password. The role is `NOINHERIT`, so on PostgreSQL 16+ the `rds_iam` grant is made with `INHERIT FALSE`; RDS checks membership, not inheritance, for IAM login, but this was not tested here on 16 (only PostgreSQL 14 was available): if IAM login fails after the setup, check `\drg daypass_ro`.
+Then run the role setup from [Quickstart](quickstart.md) step 4 as the master user. On RDS the script finds the `rds_iam` role and grants it to `daypass_ro`; that grant is what allows token login. Do not set a password on the role. On PostgreSQL 16+, re-runs must come from the master user that created the role (it holds ADMIN OPTION on it) or a role granted `daypass_ro ... WITH ADMIN OPTION`; anyone else gets an error naming the `GRANT` to run. Set `rds.restrict_password_commands = 1` in the parameter group so the role cannot change its own password.
+
+> **`rds_iam` is granted for login only.** On PostgreSQL 16 and newer the setup grants it `WITH INHERIT FALSE, SET FALSE`: the role is a member (which is all IAM login checks) but can neither use `rds_iam`'s privileges nor `SET ROLE rds_iam`. A re-run narrows an older, plain grant the same way; it needs `ADMIN OPTION` on `rds_iam`, which the master user has. Before PostgreSQL 16 a member can always `SET ROLE` to the role, so the setup instead fails unless `rds_iam` itself holds nothing: no privilege or default privilege, no owned object or user mapping, no membership in another role, no attribute. `daypass doctor` checks the same (`rds_iam` line). RDS checks membership, not inheritance, for IAM login; this grant form has not yet been tested against a live RDS instance, so if IAM login fails after the setup, check `\drg daypass_ro` and open an issue (see [SUPPORT.md](../SUPPORT.md)).
 
 ## 2. IAM permissions per person
 
@@ -51,7 +53,7 @@ If you use the IP rule, three more actions on the database's security group:
 
 - `ec2:AuthorizeSecurityGroupIngress`: add the `/32` (or `/128`) rule on `open`
 - `ec2:RevokeSecurityGroupIngress`: remove it on `close`, on the first tool call after expiry, and in `sweep`
-- `ec2:DescribeSecurityGroupRules`: `sweep` lists rules to find expired ones
+- `ec2:DescribeSecurityGroupRules`: `sweep` lists rules to find expired ones, and `close` and the MCP server's expired-lease cleanup read the rule first, to revoke it only if its description is still exactly the one `open` wrote
 
 `sts:GetCallerIdentity`, which Daypass calls to record who opened the lease, needs no permission.
 
@@ -65,7 +67,7 @@ A full policy with placeholders. Replace `<account-id>` with your 12-digit accou
       "Sid": "DaypassConnect",
       "Effect": "Allow",
       "Action": "rds-db:connect",
-      "Resource": "arn:aws:rds-db:eu-central-1:<account-id>:dbuser:db-XXXXXXXXXXXXXXXXXXXXXXXXXX/daypass_ro"
+      "Resource": "arn:aws:rds-db:us-east-1:<account-id>:dbuser:db-XXXXXXXXXXXXXXXXXXXXXXXXXX/daypass_ro"
     },
     {
       "Sid": "DaypassIpRule",
@@ -74,10 +76,10 @@ A full policy with placeholders. Replace `<account-id>` with your 12-digit accou
         "ec2:AuthorizeSecurityGroupIngress",
         "ec2:RevokeSecurityGroupIngress"
       ],
-      "Resource": "arn:aws:ec2:eu-central-1:<account-id>:security-group/sg-xxxxxxxxxxxxxxxxx"
+      "Resource": "arn:aws:ec2:us-east-1:<account-id>:security-group/sg-xxxxxxxxxxxxxxxxx"
     },
     {
-      "Sid": "DaypassSweep",
+      "Sid": "DaypassDescribeRules",
       "Effect": "Allow",
       "Action": "ec2:DescribeSecurityGroupRules",
       "Resource": "*"
@@ -94,9 +96,9 @@ With `securityGroupId` set, `daypass open`:
 
 1. writes the lease first, then asks `https://checkip.amazonaws.com` for your public IP address,
 2. adds an inbound TCP rule for `<ip>/32` (an IPv4 address) or `<ip>/128` (an IPv6 address) on the target's port, described `daypass:<lease-id> until <expiresAt>`,
-3. stores the rule id in the lease.
+3. stores the rule id in the lease, next to the region, group and AWS profile it was created with (those are written before the rule exists).
 
-`daypass close` revokes that rule. If the lease expires without `close`, the next MCP tool call sees the expired lease and revokes the rule before refusing the call; if that revoke fails, it is silent and the sweep below removes the rule. Until then the rule stays in the group. If `open` crashes after AWS created the rule but before the rule id was written, the rule is still tagged with the lease id and its expiry, and `sweep` removes it once that time has passed.
+`daypass close` revokes that rule in the group the lease recorded, even if the target's config has changed since, and only if the rule's description is still exactly `daypass:<lease-id> until <expiresAt>`; otherwise it warns (`… was NOT revoked: it is not the rule daypass created for lease …`) and still clears the lease. If the lease expires without `close`, the next MCP tool call sees the expired lease and revokes the rule before refusing the call (it waits at most 10 s for AWS; a slower revoke finishes in the background); if that revoke fails, it is silent and the sweep below removes the rule. Until then the rule stays in the group. If `open` crashes after AWS created the rule but before the rule id was written, the rule is still tagged with the lease id and its expiry, and `sweep` removes it once that time has passed.
 
 **Remove any `0.0.0.0/0` rule from that security group first.** A per-IP rule adds nothing while the group is open to the world. Pass `--no-network` to `open` when you are already inside the VPC and do not want a rule.
 
@@ -104,7 +106,7 @@ The rule covers the one address `checkip.amazonaws.com` saw. If your public addr
 
 ## 4. Sweep cron
 
-Expired rules can be left behind when a laptop goes to sleep or the AWS call fails. `daypass sweep prod` lists the group's rules and removes every `daypass:*` rule whose `until` timestamp is in the past. It also clears an expired local lease file. Run it every 15 minutes from a machine that has the same AWS permissions. Cron does not load your shell profile, so use the full path from `which daypass` and make sure the AWS profile is reachable:
+Expired rules can be left behind when a laptop goes to sleep or the AWS call fails. `daypass sweep prod` lists the group's rules and removes every rule whose description is exactly what `open` writes (`daypass:<8 hex characters> until <ISO time>`) and whose time is in the past; any other rule, including one whose description merely starts with `daypass:`, is left alone. It also clears an expired local lease file. Run it every 15 minutes from a machine that has the same AWS permissions. Cron does not load your shell profile, so use the full path from `which daypass` and make sure the AWS profile is reachable:
 
 ```text
 */15 * * * * /usr/local/bin/daypass sweep prod >> "$HOME/.daypass/sweep.log" 2>&1
@@ -114,9 +116,9 @@ Output when nothing is left over is `Nothing to sweep.`
 
 ## 5. TLS and the pinned CA
 
-RDS targets always verify TLS, and verify it against the AWS RDS global CA bundle that ships inside the package (`certs/global-bundle.pem`, from `truststore.pki.rds.amazonaws.com`). That covers every target with `region` and every target whose host ends in `.rds.amazonaws.com`, URL and password targets included. The token and the rows travel over the public internet, so the server has to present a certificate that chains to Amazon's RDS roots. A target that reaches RDS through a CNAME of your own and has no `region` uses the system CA store, which does not carry those roots: set `sslCa` to the bundle (or add `region`). `sslCa` always wins over the bundle. `"ssl": false` turns TLS off for any target, RDS included. Never set it on an RDS target.
+RDS targets always verify TLS, and verify it against the AWS RDS global CA bundle that ships inside the package (`certs/global-bundle.pem`, from `truststore.pki.rds.amazonaws.com`). That covers every target with `region` and every target whose host is an RDS endpoint (`*.rds.amazonaws.com`, and the RDS domains of the other AWS partitions), URL and password targets included. The bundle holds the commercial partition's roots only: in China, GovCloud, the European Sovereign Cloud or the ISO partitions, set `sslCa` to that partition's RDS CA bundle. The token and the rows travel over the public internet, so the server has to present a certificate that chains to Amazon's RDS roots. A target that reaches RDS through a CNAME of your own and has no `region` uses the system CA store, which does not carry those roots: set `sslCa` to the bundle (or add `region`). `sslCa` always wins over the bundle. `"ssl": false` and `sslmode=disable` are refused for these targets (`TLS cannot be turned off for an RDS or IAM (region) target`); they only work for other hosts.
 
-Tokens are minted locally by `@aws-sdk/rds-signer` (a presigned request, no API call) and are valid for 15 minutes; Daypass discards its connection pool on the first call after 10 minutes and mints a fresh token, so a token never expires mid-pool.
+Tokens are minted locally by `@aws-sdk/rds-signer` (a presigned request, no API call) and are valid for 15 minutes. Daypass mints one when a new connection needs it and reuses it for at most 10 minutes; the token is only checked at login, so an open connection is not affected when it expires.
 
 ## 6. Check it
 

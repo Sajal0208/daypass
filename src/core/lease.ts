@@ -9,6 +9,13 @@ export interface Lease {
   ip?: string;
   /** Security-group rule id created for this lease, if any. */
   sgRuleId?: string;
+  /**
+   * Where that rule lives, recorded when it is created, so `close` and expiry cleanup revoke it
+   * in the right place even if the target config changes in between.
+   */
+  sgRegion?: string;
+  sgGroupId?: string;
+  sgProfile?: string;
 }
 
 export function isLeaseLive(l: Lease | null | undefined, now = Date.now()): boolean {

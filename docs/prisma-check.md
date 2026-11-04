@@ -29,7 +29,7 @@ The installed package exposes the same logic without a checkout:
 daypass hidden check --file hidden-columns.txt --prisma prisma/schema.prisma
 ```
 
-It prints the `Listed (hidden or !allowed) but not in the schema` and `Sensitive-looking but not hidden` lists, plus `Columns both hidden and !allowed`, and exits 1 if any is non-empty. `--live <target>` and `--url "$OWNER_URL"` do the same against a running database instead of the Prisma file, which also catches tables that were created outside Prisma, generated columns derived from a hidden column, columns hidden on a partition or child only, and (for information) the views the setup will withhold. See [Hidden columns](hidden-columns.md).
+It prints the `Listed (hidden or !allowed) but not in the schema` and `Sensitive-looking but not hidden` lists, plus `Columns both hidden and !allowed`, and exits 1 if any is non-empty. `--live <target>` and `--url-env OWNER_URL` do the same against a running database instead of the Prisma file, which also catches tables that were created outside Prisma, generated columns derived from a hidden column, columns hidden on a partition or child only, and (for information) the views the setup will withhold. See [Hidden columns](hidden-columns.md).
 
 ## In your app's CI
 

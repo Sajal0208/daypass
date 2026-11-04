@@ -20,7 +20,7 @@ The CLI prints exactly one of these; report it as described:
 - `Lease <id> on "<target>" expired at <ISO>. Run: daypass close` — expired. Tell the user to run
   `daypass close`, then print the `daypass open` line exactly as in the next case.
 - `No lease.` — print the exact line the user can paste. The target is a name from the conversation
-  (`~/.daypass/config.json` lists them); the reason goes into every audit line, so it must say why,
+  (ask the user when it is not there); the reason goes into every audit line, so it must say why,
   in one short phrase (`"why did signups drop on Monday"`, a ticket id):
 
   ```bash
@@ -31,5 +31,7 @@ The CLI prints exactly one of these; report it as described:
   with placeholders. Keep `--ttl 45m` unless the user named a duration.
 
 Never run `daypass open`, `daypass close` or any MCP tool from this command: opening a lease is the
-user's decision, and the audit log records it under their identity. A failing `daypass status`
+user's decision, and the audit log records it under their identity. Never read `~/.daypass/config.json`
+(URL targets keep the role's password in it) or `~/.daypass/lease.json`, and never write to
+`~/.daypass/hidden-columns.txt`, least of all a `!table.column` allow line: the human edits that file. A failing `daypass status`
 (command not found, config error) is reported verbatim with the hint `npm i -g daypass`.

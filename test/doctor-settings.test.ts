@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { roleSettingsDrift, parseManifest, runsSqlFromString, EXPECTED_ROLE_SETTINGS } from '../src/cli/doctor.js';
+import { roleSettingsDrift, parseManifest, runsSqlFromString, EXPECTED_ROLE_SETTINGS, MATVIEW_SAFE_FUNCTIONS, MATVIEW_SAFE_CATALOGS } from '../src/cli/doctor.js';
 
 /** What sql/setup-role.sql writes, as pg_roles.rolconfig shows it. */
 const SETUP = Object.entries(EXPECTED_ROLE_SETTINGS).map(([k, v]) => `${k}=${v}`);
@@ -63,3 +63,15 @@ describe('runsSqlFromString (functions the role can EXECUTE)', () => {
   );
 });
 
+describe('matview safe lists (review 2026-11-01)', () => {
+  it.each(['now', 'date_trunc', 'timestamptz_mi_interval', 'to_char', 'jsonb_build_object', 'textanycat'])('allows %s', (f) =>
+    expect(MATVIEW_SAFE_FUNCTIONS.test(f)).toBe(true),
+  );
+  it.each(['current_setting', 'query_to_xml', 'has_column_privilege', 'pg_stat_get_activity', 'pg_stat_get_backend_activity', 'nextval', 'set_config', 'pg_get_userbyid', 'now_x'])(
+    'does not allow %s',
+    (f) => expect(MATVIEW_SAFE_FUNCTIONS.test(f)).toBe(false),
+  );
+  it('allows only plain catalog tables, no view that filters by caller', () => {
+    for (const v of ['pg_stats', 'pg_stats_ext', 'pg_stat_activity', 'pg_settings', 'pg_user_mappings', 'pg_statistic', 'pg_authid']) expect(MATVIEW_SAFE_CATALOGS).not.toContain(v);
+  });
+});

@@ -1,6 +1,6 @@
 {
   "name": "daypass",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Temporary, read-only, audited production-database access for Claude Code: lease-aware skills, setup walkthrough, PII guard hook.",
   "author": { "name": "Vocobase", "email": "developers@vocobase.com" },
   "homepage": "https://github.com/Sajal0208/daypass",

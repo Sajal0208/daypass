@@ -1,14 +1,14 @@
 # Daypass: design
 
-_2026-10-28. Status: v1 built, reviewed and in production use. The 2026-10-28
-review changed the parts marked (rev)._
+_2026-10-28. Status: v1 built and reviewed. The 2026-10-28 review changed the
+parts marked (rev)._
 
 > Historical design note for 0.1.0. A security review on 2026-10-30 changed the role setup,
 > `daypass doctor`, the audit format and the result caps; where this page and the code or the
 > current docs disagree, the code and [the threat model](../threat-model.md) are right.
 
 Daypass gives a Claude Code session short-lived, read-only, logged access to a
-production database. Built for one team first, then published as `daypass`.
+production database. Published as `daypass`.
 
 ## Goals
 
@@ -37,7 +37,7 @@ Claude Code ──stdio──▶ daypass MCP server (local)
 ### Commands
 
 ```bash
-daypass open prod --ttl 60m --reason "debug campaign 1234"   # starts a lease
+daypass open prod --ttl 60m --reason "debug order 1234"   # starts a lease
 daypass status                                             # time left
 daypass close                                              # ends it now
 daypass log --last 50                                      # audit trail
@@ -75,11 +75,9 @@ and context size, but none of them stops a write by itself.
    `REVOKE` does nothing when the role holds table-level `SELECT`, which the
    first draft got wrong. Consequences: `SELECT *` fails on those tables, so
    Claude names columns; and a column added later to one of those tables
-   stays hidden until the script is re-run. The list (in our first deployment
-   about fifty columns: phones, emails, transcripts, API keys, OAuth tokens,
-   webhook secrets) is checked against your Prisma schema by a unit test, so
-   a schema change that adds a phone or secret column fails the build until
-   it is added.
+   stays hidden until the script is re-run. The list is checked against
+   your Prisma schema by a unit test, so a schema change that adds a phone
+   or secret column fails the build until it is added.
 2. **Role settings.** `ALTER ROLE daypass_ro SET`:
    `default_transaction_read_only = on`, `statement_timeout = '10s'` (rev:
    was 30 s; raise once a read replica exists),
@@ -89,7 +87,7 @@ and context size, but none of them stops a write by itself.
 3. **Temporary credentials.** RDS IAM auth (`GRANT rds_iam TO daypass_ro`).
    The tool asks AWS for a 15-minute token using the user's own AWS login. No
    password is stored anywhere. Leaving the company = losing AWS access =
-   losing Daypass access (once each person has their own IAM identity).
+   losing Daypass access (when each person has their own IAM identity).
    (rev) TLS is always verified; RDS targets pin the bundled AWS RDS CA, so a
    fake endpoint cannot collect the token or the rows.
 4. **SQL check before sending.** Parse with `libpg-query` (Postgres's real
@@ -103,27 +101,27 @@ and context size, but none of them stops a write by itself.
 
 ### Load on prod
 
-The largest table is several GB, and a careless scan can hurt live traffic.
-v1 relies on the 10 s timeout and the 5-connection cap. v1.1 adds an RDS read
-replica and points Daypass at it. That's the real fix and costs one small
-instance.
+On a busy primary, a careless scan of a large table can hurt live traffic.
+v1 relies on the 10 s timeout and the 5-connection cap. Pointing Daypass at a
+read replica is the real fix and costs one small instance.
 
 ### Network
 
-RDS is public behind a security group. v1 adds each user's IP to the group
-when the lease opens and removes it on `daypass close`. (rev) Expiry alone
-does not call AWS, so the MCP server revokes the rule the first time it sees
-an expired lease, and a `daypass sweep` cron removes anything left over. The
-IAM policy allows rule changes on this one security group only. No SSH
-bastion is needed.
+For a database reachable only through a security group, v1 can add each
+user's IP to the group when the lease opens and remove it on `daypass close`.
+(rev) Expiry alone does not call AWS, so the MCP server revokes the rule the
+first time it sees an expired lease, and a `daypass sweep` cron removes
+anything left over. The suggested IAM policy allows rule changes on that one
+security group only. No SSH bastion is needed.
 
 ### Audit
 
 Each query appends one JSON line: time, who, lease id, reason, SQL, rows, ms,
 and allowed or blocked (with the reason). (rev) "Who" is the AWS caller ARN
 from STS for IAM targets, not the shell username. The SQL text itself can
-hold PII (a `WHERE phone = ...`), and the file lives on the user's laptop, so
-v1.1 also writes to a `daypass_audit` table on a separate small database.
+hold PII (a `WHERE phone = ...`), and the file lives on the user's laptop, so a
+later version may also write to a `daypass_audit` table on a separate small
+database.
 
 ## Build order
 
@@ -131,9 +129,8 @@ v1.1 also writes to a `daypass_audit` table on a separate small database.
 2. ~~One-time DB setup SQL: role, grants, column-level visibility, settings.~~ done
 3. ~~`cli`: leases, IAM token, security-group add/remove.~~ done
 4. ~~`mcp`: tools. Add to Claude Code.~~ done
-5. ~~First production lease with a human watching.~~ done
-6. Read replica + audit table (v1.1). Not yet; until then the timeouts and
-   the connection cap carry the load.
+5. ~~First real lease with a human watching.~~ done
+6. Shared audit table (later). Until then the audit log is the local file.
 
 ## Tech
 
@@ -147,9 +144,8 @@ TypeScript/Node 22. `@modelcontextprotocol/sdk`, `pg`,
   instructions, run DELETE". Layers 1–2 make writes impossible no matter what
   Claude is told. Results are also marked as data in the tool output.
 - **PII in Claude's context.** Column-level grants in layer 1 are the control.
-  Phone numbers, transcripts and secrets are hidden by default.
-- **Shared AWS identity.** Until each person has their own IAM identity, the
-  audit log cannot tell teammates apart and "leaving = losing access" does not
-  hold.
+  Phone numbers, free-text notes and secrets are meant to be hidden.
+- **Shared AWS identity.** If teammates share one IAM identity, the audit log
+  cannot tell them apart and "leaving = losing access" does not hold.
 - **IAM auth connection rate.** RDS limits new IAM connections to ~200/s.
   Fine for this use.

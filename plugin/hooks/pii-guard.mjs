@@ -22,8 +22,8 @@
  * error exits 2 with a reason, and hooks.json sets `onFailure: block` for a crash or a timeout.
  *
  * Dependency-free on purpose: it runs on every query, from a plugin directory, with no install.
- * The name heuristic (WORDS, SPECIAL, ALWAYS, SAFE_KEY, SAFE_TAIL, STRONG, toSnake, looksSensitive) is a verbatim
- * copy of src/core/hidden.ts, which cannot be imported from here. Change both files together:
+ * The name heuristic (WORDS, SPECIAL, ALWAYS, SAFE_KEY, SAFE_TAIL, STRONG, GLUE, toSnake, singular,
+ * splitGlued, looksSensitive) is a verbatim copy of src/core/hidden.ts, which cannot be imported from here. Change both files together:
  * the parity test in test/plugin-hook.test.ts guards against drift.
  */
 import { readFileSync } from 'node:fs';
@@ -40,9 +40,9 @@ const WORDS = new Set([
   'religion', 'notes', 'body', 'payload', 'metadata', 'recording', 'lat', 'lng', 'latitude', 'longitude',
   'postal', 'zip', 'zipcode', 'caller', 'encrypted',
 ]);
-/** Prefix/exact-name cases; `lines` and `prompt_snapshot` are free-text transcript/log columns from the first deployment. */
+/** Prefix/exact-name cases. */
 const SPECIAL =
-  /^encrypted_|^health_|^prompt_snapshot$|^(lines|credentials)$|^(first|last|full|middle|given|family|user)_name$|^e_mail$|^user_agent$/;
+  /^encrypted_|^health_|^credentials$|^(first|last|full|middle|given|family|user)_name$|^e_mail$|^user_agent$/;
 /** Identifiers that are themselves PII, even though they end in a normally-safe tail. */
 const ALWAYS = /^(national|tax|government)_(id|number)$|^(bank_)?account_number$|^national_insurance(_number)?$|^device_id$|^stripe_customer_id$/;
 /** `key` names that are not credentials: public keys, storage and cache keys, partition keys. */
@@ -52,6 +52,22 @@ const SAFE_TAIL =
   /_(verified|confirmed|count|used|at|id|type|status|enabled|required|country|country_code|brand|layout|limit|prefix|version|expiry|expires|expiration|rounds|domain|last_\d+)$/;
 /** Words that beat an `_id` / `_type` tail: email_id, secret_key_id and api_key_hash_type are still sensitive. */
 const STRONG = new Set(['email', 'secret', 'key', 'token', 'password']);
+/**
+ * Words a run-together part is split into (`emailaddress` -> email_address, `dateofbirth` ->
+ * date_of_birth, `apikeyid` -> api_key_id): WORDS, the safe tails, and the words that pair with
+ * them in common names. A part is split only when it is made entirely of these, so `keyboard`,
+ * `panel` and `pinned` stay whole.
+ */
+const GLUE = new Set([
+  ...WORDS,
+  'api', 'access', 'refresh', 'auth', 'session', 'private', 'client', 'first', 'last', 'full', 'middle', 'given',
+  'family', 'user', 'agent', 'date', 'of', 'number', 'num', 'no', 'hash', 'digest', 'name', 'street', 'home',
+  'billing', 'shipping', 'national', 'tax', 'government', 'account', 'bank', 'credit', 'device', 'code',
+  'verified', 'confirmed', 'count', 'used', 'at', 'id', 'type', 'status', 'enabled', 'required', 'country',
+  'brand', 'layout', 'limit', 'prefix', 'version', 'expiry', 'expires', 'expiration', 'rounds', 'domain',
+]);
+/** Longest GLUE word plus a plural `es`: bounds the split to linear time. */
+const GLUE_MAX = Math.max(...[...GLUE].map((w) => w.length)) + 2;
 
 /**
  * snake_case for snake_case, camelCase and quoted names: phoneNumber -> phone_number,
@@ -66,11 +82,39 @@ function toSnake(name) {
     .toLowerCase();
 }
 
+/** The singular of a plural sensitive word (`secrets` -> secret, `addresses` -> address); anything else as it is. */
+function singular(w) {
+  if (WORDS.has(w)) return w;
+  if (w.endsWith('es') && WORDS.has(w.slice(0, -2))) return w.slice(0, -2);
+  if (w.endsWith('s') && WORDS.has(w.slice(0, -1))) return w.slice(0, -1);
+  return w;
+}
+
+/** A run-together part as two or more GLUE words (longest first), or null when it is not one. */
+function splitGlued(p) {
+  if (p.length < 4 || p.length > 64) return null;
+  const best = new Array(p.length + 1).fill(null);
+  best[p.length] = [];
+  for (let i = p.length - 1; i >= 0; i--) {
+    for (let j = Math.min(p.length, i + GLUE_MAX); j > i; j--) {
+      const rest = best[j];
+      const w = singular(p.slice(i, j));
+      if (rest !== null && GLUE.has(w)) {
+        best[i] = [w, ...rest];
+        break;
+      }
+    }
+  }
+  return best[0] !== null && best[0].length >= 2 ? best[0] : null;
+}
+
 export function looksSensitive(column) {
-  const name = toSnake(column);
+  const parts = toSnake(column)
+    .split('_')
+    .flatMap((p) => (WORDS.has(singular(p)) ? [singular(p)] : splitGlued(p) ?? [p]));
+  const name = parts.join('_');
   if (ALWAYS.test(name)) return true;
   if (SAFE_KEY.test(name)) return false;
-  const parts = name.split('_');
   if (SAFE_TAIL.test(name) && !(/_(id|type)$/.test(name) && parts.some((p) => STRONG.has(p)))) return false;
   if (SPECIAL.test(name)) return true;
   return parts.some((part) => WORDS.has(part));
@@ -101,6 +145,12 @@ const OPERAND_KEYWORDS = new Set([
   'localtimestamp', 'current_user', 'session_user', 'user', 'current_role', 'current_catalog', 'current_schema',
 ]);
 /**
+ * Unreserved keywords that take an expression right after them: `json_object('k' VALUE u)`,
+ * `KEY 'k' VALUE u`, `json_query(x, '$a' PASSING u AS a)`, `PASSING BY REF u`, `x BETWEEN u AND y`.
+ * A FROM alias after one of these is a whole row, not a column alias of the word before it.
+ */
+const VALUE_INTRO = new Set(['value', 'passing', 'key', 'between', 'ref']);
+/**
  * Words that are never a table alias: Postgres's reserved and type/function-name keywords
  * (pg_get_keywords() catcode R and T on PG 14). Unreserved words such as `by`, `values` and
  * `explain` are valid aliases (`from leads as by`), so they are not in here.
@@ -124,19 +174,25 @@ const UNINSPECTABLE = new Set([
 ]);
 /**
  * Functions that take a whole row and can be called in attribute notation: Postgres reads
- * `l.to_jsonb` as `to_jsonb(l)` when `l` has no column of that name. Generated on PG 14 from
- * pg_proc (every function callable with one argument of type record, anyelement, "any",
- * anynonarray or anycompatible*, or VARIADIC "any"), then kept to the ones that resolve as
- * `l.<name>` and return or encode the row's values; plus hstore (extension). Left out because
- * they return no values and are common column names: count, rank, mode, lead, lag and the other
- * aggregates and window functions that error without OVER / WITHIN GROUP, num_nulls,
- * num_nonnulls, pg_typeof, pg_column_size, pg_column_compression, pg_collation_for.
+ * `l.to_jsonb` as `to_jsonb(l)` when `l` has no column of that name. Regenerated on PG 16 and 17
+ * (a superset of 14 and 15: any_value, json_agg_strict and jsonb_agg_strict are new in 16) by
+ * running `select p.<name> from probe p` for every name from
+ *
+ *   select distinct p.proname from pg_proc p
+ *   where p.pronargs >= 1 and p.pronargs - p.pronargdefaults <= 1
+ *     and (select t.typtype in ('p', 'c') from pg_type t where t.oid = p.proargtypes[0]);
+ *
+ * and keeping the ones whose result contains the row's values; plus hstore (extension), and the
+ * *_out / json_build_object / hash_record names of the first PG 14 list. Left out because they
+ * return no values and are common column names: count, num_nulls, num_nonnulls, pg_typeof,
+ * pg_column_size, pg_column_compression, pg_column_toast_chunk_id (and rank, mode, lead, lag and
+ * the other aggregates and window functions that error without OVER / WITHIN GROUP).
  */
 const WHOLE_ROW_ATTR = new Set([
   'to_json', 'to_jsonb', 'row_to_json', 'json_build_array', 'jsonb_build_array', 'json_build_object',
-  'jsonb_build_object', 'json_agg', 'jsonb_agg', 'array_agg', 'concat', 'quote_literal', 'quote_nullable',
-  'record_out', 'record_send', 'hash_record', 'any_out', 'anyelement_out', 'anynonarray_out', 'anycompatible_out',
-  'anycompatiblenonarray_out', 'hstore',
+  'jsonb_build_object', 'json_agg', 'jsonb_agg', 'json_agg_strict', 'jsonb_agg_strict', 'array_agg', 'any_value',
+  'concat', 'quote_literal', 'quote_nullable', 'record_out', 'record_send', 'hash_record', 'any_out',
+  'anyelement_out', 'anynonarray_out', 'anycompatible_out', 'anycompatiblenonarray_out', 'hstore',
 ]);
 /** Planner statistics: sample values (most_common_vals, histogram_bounds) of every readable column. */
 const STATS = new Set(['pg_stats', 'pg_statistic', 'pg_stats_ext', 'pg_stats_ext_exprs', 'pg_statistic_ext_data']);
@@ -158,15 +214,29 @@ export function hookDisabled(env) {
 }
 
 // --- tokenizer ---------------------------------------------------------------------------
+// Follows src/backend/parser/scan.l (Postgres 17). Where versions differ it takes the reading
+// that makes the guard see more: `\v` is whitespace (17+; a syntax error before), numbers follow
+// the 16+ forms (14/15 read `0x1F` as `0` plus the alias `x1F`, which is never a column read).
+// test/plugin-scanner-parity.test.ts compares token boundaries with libpg-query's scanner.
 
 const isDigit = (c) => c >= 48 && c <= 57;
 const isIdentStart = (c) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c >= 128;
 const isIdentPart = (c) => isIdentStart(c) || isDigit(c) || c === 36;
+/** scan.l `space`: [ \t\n\r\f\v] */
 const isSpace = (c) => c === 32 || (c >= 9 && c <= 13);
-const NUMBER = /0[xX][0-9A-Fa-f_]+|0[oO][0-7_]+|0[bB][01_]+|[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9]+)?|\.[0-9][0-9_]*(?:[eE][+-]?[0-9]+)?/y;
+/** scan.l `horiz_space`: [ \t\f\v] */
+const isHorizSpace = (c) => c === 32 || c === 9 || c === 11 || c === 12;
+/** scan.l `newline`: [\n\r] */
+const isNewline = (c) => c === 10 || c === 13;
+const NUMBER = /0[xX](?:_?[0-9A-Fa-f])+|0[oO](?:_?[0-7])+|0[bB](?:_?[01])+|(?:[0-9](?:_?[0-9])*(?:\.(?:[0-9](?:_?[0-9])*)?)?|\.[0-9](?:_?[0-9])*)(?:[eE][+-]?[0-9](?:_?[0-9])*)?/y;
 const DOLLAR_TAG = /\$(?:[A-Za-z_\u0080-￿][A-Za-z0-9_\u0080-￿]*)?\$/y;
-const UESCAPE = /uescape/iy;
-const UESCAPE_CHAR = /'([^'])'/y;
+const NEWLINE = /[\n\r]/g;
+
+/** Index of the `\n` / `\r` that ends a `--` comment starting at `i` (scan.l: non_newline is [^\n\r]). */
+function lineCommentEnd(sql, i) {
+  NEWLINE.lastIndex = i;
+  return NEWLINE.exec(sql) ? NEWLINE.lastIndex - 1 : sql.length;
+}
 
 /** Index of the next character that is not whitespace or inside a comment. */
 function skipSpace(sql, i) {
@@ -174,8 +244,7 @@ function skipSpace(sql, i) {
   for (;;) {
     while (i < n && isSpace(sql.charCodeAt(i))) i++;
     if (sql[i] === '-' && sql[i + 1] === '-') {
-      const j = sql.indexOf('\n', i);
-      i = j < 0 ? n : j + 1;
+      i = lineCommentEnd(sql, i);
     } else if (sql[i] === '/' && sql[i + 1] === '*') {
       i = skipBlockComment(sql, i);
     } else return i;
@@ -193,6 +262,31 @@ function skipBlockComment(sql, i) {
     else i++;
   }
   return i;
+}
+
+/**
+ * scan.l `quotecontinue`: after a string constant ends at `i`, whitespace that holds a newline
+ * (`--` comments allowed, block comments not) and another `'` continue the same constant
+ * (`'a'\n'b'` is 'ab'). Returns the index of that `'`, or -1.
+ */
+function continuation(sql, i) {
+  const n = sql.length;
+  while (i < n) {
+    if (isHorizSpace(sql.charCodeAt(i))) i++;
+    else if (sql[i] === '-' && sql[i + 1] === '-') i = lineCommentEnd(sql, i);
+    else break;
+  }
+  if (!isNewline(sql.charCodeAt(i))) return -1;
+  i++;
+  for (;;) {
+    if (isSpace(sql.charCodeAt(i))) { i++; continue; }
+    if (sql[i] === '-' && sql[i + 1] === '-') {
+      const e = lineCommentEnd(sql, i);
+      if (e < n) { i = e + 1; continue; }
+    }
+    break;
+  }
+  return sql[i] === "'" ? i : -1;
 }
 
 /** Index just past the closing `q`, treating `qq` as an escaped quote. Unterminated: end of input. */
@@ -221,6 +315,77 @@ function readEscapeString(sql, start) {
   }
   return n;
 }
+
+/** Index just past the `'` that ends a `B'...'` / `X'...'` body (no `''` doubling there). */
+function readBitString(sql, start) {
+  const j = sql.indexOf("'", start + 1);
+  return j < 0 ? sql.length : j + 1;
+}
+
+const E_ESCAPE = /\\(?:([0-7]{1,3})|x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{4})|U([0-9A-Fa-f]{8})|([\s\S]))|''/g;
+const E_CHARS = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
+/** Body of an `E'...'` segment with its escapes decoded. */
+function decodeEscapeBody(body) {
+  return body.replace(E_ESCAPE, (m, oct, hex, u4, u8, other) => {
+    if (m === "''") return "'";
+    if (oct !== undefined) return String.fromCharCode(parseInt(oct, 8) & 0xff);
+    if (hex !== undefined) return String.fromCharCode(parseInt(hex, 16));
+    if (u4 !== undefined || u8 !== undefined) return String.fromCodePoint(Math.min(parseInt(u4 ?? u8, 16), 0x10ffff));
+    return E_CHARS[other] ?? other;
+  });
+}
+
+/**
+ * A quoted string constant starting with its opening `'` at `q`, in one of the modes of scan.l:
+ * 'std' ('...', N'...'), 'esc' (E'...'), 'bit' (B'...', X'...'), 'uni' (U&'...'), followed
+ * through quote continuations. `ambiguous`: some 'std' segment ends elsewhere when
+ * standard_conforming_strings is off. `value`: the decoded text (std and esc only).
+ */
+function readStringConstant(sql, q, mode) {
+  let ambiguous = false;
+  let value = '';
+  for (;;) {
+    let end;
+    if (mode === 'esc') {
+      end = readEscapeString(sql, q);
+      value += decodeEscapeBody(sql.slice(q + 1, end - 1));
+    } else if (mode === 'bit') {
+      end = readBitString(sql, q);
+    } else {
+      end = readQuoted(sql, q, "'");
+      if (mode === 'std' && readEscapeString(sql, q) !== end) ambiguous = true;
+      value += sql.slice(q + 1, end - 1).replace(/''/g, "'");
+    }
+    const next = continuation(sql, end);
+    if (next < 0) return { end, ambiguous, value };
+    q = next;
+  }
+}
+
+/**
+ * The string constant that may follow `UESCAPE`: '...', E'...' or a dollar-quoted body (any
+ * SCONST, as gram.y's base_yylex reads it). Null when there is none at `i`.
+ */
+function readEscapeConstant(sql, i) {
+  const ch = sql[i];
+  if (ch === "'") return readStringConstant(sql, i, 'std');
+  if ((ch === 'E' || ch === 'e') && sql[i + 1] === "'") return readStringConstant(sql, i + 1, 'esc');
+  if (ch === '$') {
+    DOLLAR_TAG.lastIndex = i;
+    const m = DOLLAR_TAG.exec(sql);
+    if (!m) return null;
+    const close = sql.indexOf(m[0], i + m[0].length);
+    if (close < 0) return { end: sql.length, ambiguous: false, value: '' };
+    return { end: close + m[0].length, ambiguous: false, value: sql.slice(i + m[0].length, close) };
+  }
+  return null;
+}
+
+/** check_uescapechar: one ASCII character that is not a hex digit, `+`, a quote or whitespace. */
+const validUescape = (s) => s.length === 1 && s.charCodeAt(0) < 128 && !/[0-9A-Fa-f+'"\s]/.test(s);
+
+/** The string mode for each one-letter prefix of `X'...'`. */
+const PREFIX_MODE = { E: 'esc', e: 'esc', B: 'bit', b: 'bit', X: 'bit', x: 'bit', N: 'std', n: 'std' };
 
 /** Postgres folds unquoted names by lower-casing A-Z only (U+212A KELVIN SIGN stays as it is). */
 export function asciiLower(s) {
@@ -280,8 +445,7 @@ export function tokenize(sql) {
     const ch = sql[i];
     if (isSpace(c)) { i++; continue; }
     if (ch === '-' && sql[i + 1] === '-') {
-      const j = sql.indexOf('\n', i);
-      i = j < 0 ? n : j + 1;
+      i = lineCommentEnd(sql, i);
       continue;
     }
     if (ch === '/' && sql[i + 1] === '*') {
@@ -289,45 +453,48 @@ export function tokenize(sql) {
       continue;
     }
     if (ch === "'") {
-      const end = readQuoted(sql, i, "'");
       // With standard_conforming_strings off, Postgres reads a backslash in '...' as an escape,
       // so the literal can end somewhere else and hide (or expose) the text after it.
-      push('string', '', i, end, readEscapeString(sql, i) !== end ? { ambiguous: true } : undefined);
-      i = end;
+      const s = readStringConstant(sql, i, 'std');
+      push('string', '', i, s.end, s.ambiguous ? { ambiguous: true } : undefined);
+      i = s.end;
       continue;
     }
-    if ((ch === 'E' || ch === 'e') && sql[i + 1] === "'") {
-      const end = readEscapeString(sql, i + 1);
-      push('string', '', i, end);
-      i = end;
-      continue;
-    }
-    if ((ch === 'B' || ch === 'b' || ch === 'X' || ch === 'x' || ch === 'N' || ch === 'n') && sql[i + 1] === "'") {
-      const end = readQuoted(sql, i + 1, "'");
-      // N'...' is a plain string with a national-character tag: the same backslash ambiguity
-      const national = ch === 'N' || ch === 'n';
-      push('string', '', i, end, national && readEscapeString(sql, i + 1) !== end ? { ambiguous: true } : undefined);
-      i = end;
+    const prefixed = sql[i + 1] === "'" ? PREFIX_MODE[ch] : undefined;
+    if (prefixed !== undefined) {
+      // E'...', B'...', X'...', and N'...' (a plain string with a national-character tag: the same backslash ambiguity)
+      const s = readStringConstant(sql, i + 1, prefixed);
+      push('string', '', i, s.end, s.ambiguous ? { ambiguous: true } : undefined);
+      i = s.end;
       continue;
     }
     if ((ch === 'U' || ch === 'u') && sql[i + 1] === '&' && (sql[i + 2] === "'" || sql[i + 2] === '"')) {
-      const q = sql[i + 2];
-      const close = readQuoted(sql, i + 2, q);
-      if (q === "'") {
-        push('string', '', i, close);
-        i = close;
+      if (sql[i + 2] === "'") {
+        const s = readStringConstant(sql, i + 2, 'uni');
+        push('string', '', i, s.end);
+        i = s.end;
         continue;
       }
+      const close = readQuoted(sql, i + 2, '"');
       let esc = '\\';
       let end = close;
-      // `UESCAPE 'c'` may follow after whitespace and comments (Postgres 13+ reads it as the next token).
-      UESCAPE.lastIndex = skipSpace(sql, close);
-      if (UESCAPE.exec(sql)) {
-        UESCAPE_CHAR.lastIndex = skipSpace(sql, UESCAPE.lastIndex);
-        const m = UESCAPE_CHAR.exec(sql);
-        if (m) { esc = m[1]; end = UESCAPE_CHAR.lastIndex; }
+      let ambiguous = false;
+      // `UESCAPE <string constant>` may follow after whitespace and comments (Postgres 13+ reads
+      // it as the next tokens): '!', E'\041', $$!$$ and continued strings all count.
+      const kw = skipSpace(sql, close);
+      let kwEnd = kw;
+      while (kwEnd < n && isIdentPart(sql.charCodeAt(kwEnd))) kwEnd++;
+      if (kwEnd - kw === 7 && sql.slice(kw, kwEnd).toLowerCase() === 'uescape' && isIdentStart(sql.charCodeAt(kw))) {
+        const s = readEscapeConstant(sql, skipSpace(sql, kwEnd));
+        if (s !== null) {
+          // an invalid escape character is an error in Postgres; keep the default then
+          if (validUescape(s.value)) esc = s.value;
+          end = s.end;
+          ambiguous = s.ambiguous;
+        }
       }
       ident(decodeUnicodeIdent(unquoteIdent(sql.slice(i + 2, close)), esc), true, i, end);
+      if (ambiguous) toks[toks.length - 1].ambiguous = true;
       i = end;
       continue;
     }
@@ -349,6 +516,7 @@ export function tokenize(sql) {
         continue;
       }
       if (isDigit(sql.charCodeAt(i + 1))) {
+        // scan.l `param`: \$ followed by digits
         let j = i + 1;
         while (j < n && isDigit(sql.charCodeAt(j))) j++;
         push('param', sql.slice(i, j), i, j);
@@ -359,11 +527,20 @@ export function tokenize(sql) {
       i++;
       continue;
     }
+    if (ch === '.' && sql[i + 1] === '.') {
+      // scan.l `dot_dot`: `..2` is `..` and then 2, not `.` and .2
+      push('punct', '.', i, i + 1);
+      push('punct', '.', i + 1, i + 2);
+      i += 2;
+      continue;
+    }
     if (isDigit(c) || (ch === '.' && isDigit(sql.charCodeAt(i + 1)))) {
       NUMBER.lastIndex = i;
-      const m = NUMBER.exec(sql);
-      push('number', m[0], i, NUMBER.lastIndex);
-      i = NUMBER.lastIndex;
+      let num = NUMBER.exec(sql)[0];
+      // scan.l `decimalfail`: `1..` is the integer 1 and then `..`
+      if (num.endsWith('.') && sql[i + num.length] === '.') num = num.slice(0, -1);
+      push('number', num, i, i + num.length);
+      i += num.length;
       continue;
     }
     if (isIdentStart(c)) {
@@ -648,7 +825,10 @@ function fromItems(toks, match, parent) {
     if (!isKeyword(toks[k], 'from')) continue;
     const p = parent[k];
     if (p >= 1 && toks[p - 1].type === 'ident' && FROM_IN_ARGS.has(toks[p - 1].fold)) continue; // `extract(year from x)`
-    if (isKeyword(toks[k - 1], 'distinct') && (isKeyword(toks[k - 2], 'is') || isKeyword(toks[k - 2], 'not'))) continue; // `is distinct from`
+    // `is [not] distinct from` (DISTINCT right before FROM is nothing else in Postgres's grammar). The
+    // same test as the one fromList scans past, so a FROM list never runs over a FROM that also
+    // starts its own list: that would scan `from a distinct from distinct from ...` quadratically.
+    if (isKeyword(toks[k - 1], 'distinct')) continue;
     fromList(k + 1, scopeEnd(k), 0);
   }
   return { aliases, declared, names, renamed };
@@ -703,7 +883,8 @@ export function decide(sql, hiddenFile, env) {
   // 1. Functions that run SQL from a string or return whole rows.
   for (let k = 0; k < toks.length; k++) {
     const t = toks[k];
-    if (t.type === 'ident' && UNINSPECTABLE.has(t.value.toLowerCase()) && isPunct(toks[k + 1], '(')) {
+    // `f(...)`, or attribute notation `('select ...').ts_stat` / `t.dblink`, which Postgres reads as f(x)
+    if (t.type === 'ident' && UNINSPECTABLE.has(t.value.toLowerCase()) && (isPunct(toks[k + 1], '(') || isPunct(toks[k - 1], '.'))) {
       return deny(
         `${t.value}() executes SQL from a string / returns whole rows, which the guard cannot inspect. ` +
           'Use a plain SELECT that names its columns instead.',
@@ -764,7 +945,9 @@ export function decide(sql, hiddenFile, env) {
     }
     if (isPunct(prev, '.') || isPunct(next, '.')) continue; // qualifier or qualified name
     if (isKeyword(prev, 'as')) continue; // `count(*) as users`
-    if (endsValue(toks, match, k - 1)) continue; // `count(*) users`: an implicit column alias
+    // `kv.value u` is a column and its alias; a bare `value u` is the SQL/JSON keyword and a whole row
+    const intro = prev?.type === 'ident' && !prev.quoted && VALUE_INTRO.has(prev.fold) && !isPunct(toks[k - 2], '.');
+    if (!intro && endsValue(toks, match, k - 1)) continue; // `count(*) users`: an implicit column alias
     return wholeRow(t, item);
   }
   // 4. Every identifier against the name heuristic and the list.
@@ -774,6 +957,9 @@ export function decide(sql, hiddenFile, env) {
     if (t.type !== 'ident') continue;
     if (!t.quoted && KEYWORDS.has(t.fold)) continue;
     if (names.has(k)) continue; // a table or CTE name in FROM / WITH, not a column
+    // `api_keys.key_prefix`: a FROM table or alias as the qualifier of a column (Postgres resolves
+    // `a.b` to a relation first); the column after the dot is checked on its own
+    if (isPunct(toks[k + 1], '.') && !isPunct(toks[k - 1], '.') && aliases.has(t.fold)) continue;
     if (isOutputAlias(toks, match, k)) continue;
     // the spelling (camelCase splits into words) and, unquoted, the name Postgres resolves (phonE -> phone)
     if (!looksSensitive(t.value) && (t.quoted || !looksSensitive(t.fold))) continue;

@@ -1,0 +1,7 @@
+*{box-sizing:border-box;margin:0}
+html{background:#0b1113}
+body{min-height:100vh;background:radial-gradient(circle at 85% 0%,#0f3b36 0,#0b1113 45%) #0b1113;color:#e6edf0;font-family:-apple-system,"Inter","Helvetica Neue",sans-serif;padding:56px 64px;width:1270px}
+h1{font-size:34px;font-weight:700;letter-spacing:-.5px}
+.cap{color:#2dd4bf;font-size:20px;margin-top:8px}
+code,.mono{font-family:"SF Mono",Menlo,monospace}
+.foot{margin-top:28px;color:#8a979c;font-size:16px;font-family:"SF Mono",Menlo,monospace}

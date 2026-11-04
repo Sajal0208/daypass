@@ -1,57 +1,107 @@
-# daypass <VERSION>
+# daypass 0.2.0
 
 Security release. Temporary, read-only, audited Postgres access for AI coding agents. A human
 opens a lease; Claude Code (or any MCP client) gets `SELECT`-only tools until it expires.
 
-**If you ran 0.1.0: upgrade, then re-run the role setup and `daypass doctor`.** A review on
-2026-10-30 found that the 0.1.0 role setup left hidden columns readable through views,
-materialized views, partitions, inheritance children and `SECURITY DEFINER` functions that
-touch them, that a writing `SECURITY DEFINER` function let the role change data in a direct
-session, that the role could reset its own timeouts and read-only default, that
-`daypass doctor` could not detect a misconfigured role, and that one large `SELECT` could
-crash the MCP server before it wrote an audit line. This release fixes those. The full list
-is in `CHANGELOG.md`.
+**Upgrade, re-run the role setup, then run `daypass doctor`.** A review on 2026-11-01 found
+gaps in the role setup and in `daypass doctor`, in the client-side guard and the plugin hook,
+and in how the CLI handles its own files. Under some setups a hidden column's values, or data
+only the database owner could see, were reachable by the read-only role; several of the
+checks that should have caught that did not. This release closes them. The role's grants
+remain the wall; most fixes are in the setup script, so they take effect only after you
+re-run it.
 
 ```bash
-npm install -g daypass@<VERSION>
+npm install -g daypass@0.2.0
+export OWNER_URL='postgres://owner:...@db.example.com:5432/app'
 daypass sql --hide-file hidden-columns.txt | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1
 daypass open <target> --ttl 15m --reason "verify upgrade" && daypass doctor <target>
 ```
 
-Expect the re-run to stop on things 0.1.0 let through (a `SECURITY DEFINER` function the role
-can execute, a view over a hidden column you listed, a column hidden on a child only); each
-message says what to do.
+Expect the re-run to stop on grants an earlier version accepted; each message names what to
+revoke. If you use the Claude Code plugin, update it too (`/plugin marketplace update daypass`,
+then `/plugin update daypass@daypass`) and restart Claude Code.
 
 ## What changed
 
-- **Role setup.** Grants are explicit, per relation, in the schemas you list
-  (`--schemas`); no bulk grants and no default privileges, so a table created later is
-  invisible until you re-run. Views and materialized views that would expose a hidden column
-  are withheld and named; partitions and children inherit the hidden column; generated
-  columns derived from one must be listed. The self-check fails on any write privilege (from
-  any grantor), an executable `SECURITY DEFINER` function (unless
-  `--allow-definer-functions`), owned objects, membership in another role, anything readable
-  outside the schemas, and the unpatched CVE-2024-4317 views. Opt-in
-  `--revoke-public-temp` / `--revoke-public-create`. Hidden entries accept
-  `schema.table.column` and quoted identifiers.
-- **`daypass doctor`** checks the role in the catalog: settings drift, write privileges,
-  `CREATE`, owned objects, membership, other schemas, the hidden list the setup stored on the
-  role (`--hide-file` adds one), definer functions, and (a warning) every other function the
-  role can execute.
-- **MCP server.** Each call runs in `BEGIN READ ONLY` with a timeout of min(10 s, lease time
-  left), over the extended protocol, then `DISCARD ALL`. Rows and bytes are cut in the
-  database (500 rows, 1 MB); 32 MiB wire cap; SQL over 256 KiB refused; cut-off calls are
-  cancelled in Postgres.
-- **Audit.** A `start` line before each call and an `end` line after it, paired by `callId`;
-  `server` lines for caught crashes and transport close. `daypass log` shows one row per call.
-- **Guard.** Data-modifying CTEs refused; more banned functions (all advisory-lock and
-  large-object functions, `query_to_xml` and the other SQL-from-a-string functions,
-  `setseed`, several extensions); `EXPLAIN (ANALYZE false)` and trailing comments accepted.
-- **TLS and network.** URL targets on `*.rds.amazonaws.com` pin the bundled RDS CA too. IPv6
-  callers get a `/128` rule.
-- **Plugin.** The PII hook also covers `explain`, tokenizes SQL the way Postgres does, blocks
-  `SELECT *`, whole-row references and SQL-from-a-string functions, and fails closed on
-  Claude Code 2.1.295 or later.
+- **Role setup.**
+  - Removes `SUPERUSER`, `REPLICATION` and `BYPASSRLS` from the role if set, and stops with the
+    `ALTER ROLE` to run when it is not allowed to.
+  - Refuses column-level `INSERT` / `UPDATE` grants (to the role or `PUBLIC`), foreign servers
+    the role can reach (server or wrapper `USAGE`, user mappings), default privileges that give
+    `PUBLIC` new tables, sequences or schemas, and system-catalog grants beyond a fresh
+    cluster's.
+  - Withholds more materialized views: any whose stored rows depended on the owner's rights
+    (reading a catalog view that filters by caller, a table with row-level security, or a
+    function that is not a plain immutable built-in), followed through the views it reads.
+  - On RDS with PostgreSQL 16 or newer, grants `rds_iam` `WITH INHERIT FALSE, SET FALSE`
+    (login only) and narrows an older grant. Before 16 it requires `rds_iam` to hold nothing.
+  - Withholds plain views (at any depth) over a table with row-level security, unless they are
+    `security_invoker` (PostgreSQL 15+), and views over a relation the role is not granted.
+  - The materialized-view walk also follows operators, row comparisons, type conversions,
+    subscripts and domain checks; extension functions withhold the view.
+- **`daypass doctor`** has new checks: `files` (owner, mode, links of the state files),
+  `audit log` (unreadable lines, a warning), `tls` (a disabled-TLS RDS target fails and skips
+  the database checks), `rds_iam`, `foreign servers`, `default privileges`, `catalog grants`,
+  `materialized views`, `views as owner`, and `other databases` (a warning: databases on the
+  server the role can connect to, which the setup does not cover). It reports `REPLICATION` /
+  `BYPASSRLS` and column-level write grants under `write blocked`. `daypass hidden check`
+  lists the views the setup withholds, with the same rules.
+- **Guard.** Banned functions are also caught in attribute notation (`(x).f`, `t.f`). A column
+  whose name matches a banned function is refused when written qualified; write it
+  unqualified. An input the guard cannot check is refused instead of throwing.
+- **Results.** Each cell is now cut to 2000 characters in the database, and the 1 MB budget
+  counts the cut rows, so a row with one huge value comes back with that cell cut instead of
+  as a cut JSON preview. A row still over the budget is left out with a note; the
+  `daypass_truncated_row` placeholder is gone. Repeated
+  and integer-like column names are kept and renamed (`count_2`, `_1`) with a note.
+  `json`/`jsonb` values keep every digit, and a `json` value with `\u0000` comes back as text
+  instead of failing the query. An `explain` plan is not cut per cell. Database errors are cut at 2000
+  characters and labelled as data, since they can echo values.
+- **MCP server.** One database connection per process (the role's 5-connection limit is shared
+  by every session), closed after 5 idle seconds, with a clear message when the limit is full.
+  IAM tokens are minted per connection and reused for up to 10 minutes. A call fails about
+  5 s after its timeout if the database stops answering, and the next call reconnects. The
+  server exits when its client goes away. `describe_table` lists columns in table order with full type names and
+  says so when a table is missing; `list_tables` shows an unknown row estimate as `null`.
+- **Files and leases.** `~/.daypass` and its files must be yours, not symlinks, not hard
+  linked and regular files; looser modes are tightened with a warning. The lease is written
+  atomically under a lock file (`.lease.lock`) and records the security group its rule was
+  created in, so `close` and expiry cleanup revoke it there even if the config changed, and
+  only if the rule's description is still the one Daypass wrote. Expiry cleanup waits at most
+  10 s for AWS. A corrupt lease is reported (`daypass close` removes it). `daypass
+  open` exits 1 when a lease is already open. Audit fields are capped, a long statement is
+  stored as a prefix plus its SHA-256, and `daypass log` escapes control characters and skips
+  unreadable lines with a warning. `daypass log -n` takes positive integers only.
+- **AWS.** `daypass sweep` removes only rules whose description is exactly the one Daypass
+  writes. `close` and the MCP server's expiry cleanup now call
+  `ec2:DescribeSecurityGroupRules` too: **add it to the IAM policy of everyone who opens leases
+  with the IP rule** (docs/aws-rds.md has the policy). TLS cannot be turned off for an RDS or
+  IAM target, in any AWS partition; outside the commercial partition set `sslCa`, since the
+  bundled CA covers commercial regions only.
+- **CLI.** `daypass hidden suggest|check` takes the owner URL from an environment variable
+  (`--url-env`, default `DAYPASS_OWNER_URL`) or stdin (`--url -`), and warns when a password is
+  passed on the command line. IPv6 hosts and percent-encoded database names in URLs work.
+- **Plugin.**
+  - A new state guard hook keeps Claude from running `daypass open` or `daypass mcp` and from
+    reading or writing `~/.daypass` and the hidden-columns list. It sees through common
+    wrappers, `sh -c`, quoting, brace expansion and globs. Like the PII hook it fails closed;
+    it matches command text, so variables and scripts get past it: a fence, not a wall.
+  - The PII hook follows Postgres's scanner more closely, recognises more whole-row forms and
+    newer whole-row functions, and blocks SQL-from-a-string functions in attribute notation.
+  - The name heuristic (CLI and hook) reads plurals and run-together names (`secrets`,
+    `emailaddress`).
+  - The skills no longer read `config.json` or `lease.json`, and never write the hidden list.
+- **Docs.** Set the role's password with `\password daypass_ro` in `psql`, not
+  `ALTER ROLE ... PASSWORD` on the command line, which lands in shell history and the server
+  log.
+
+## Maintainer TODO before publishing
+
+- Re-record `docs/assets/demo.gif` and `docs/assets/demo-output.txt` with
+  `scripts/record-demo.sh`, then copy the text to `website/src/components/demo-output.txt`:
+  the recording still shows the old `Query failed after N ms: …` line and no `SRV` line in
+  `daypass log`.
 
 ## Known limits
 
@@ -68,9 +118,13 @@ Read these before you run it against anything you care about. The full list is
 - **The catalog is readable.** Hidden column names, and constants in defaults, constraints,
   index predicates and view text, are visible to the role. Values in hidden columns are not.
 - **Your files are protected by your OS user only.** An agent you also allow to run shell
-  commands can read `~/.daypass/config.json` and edit the lease and audit files.
+  commands can read `~/.daypass/config.json` and edit the lease and audit files. The plugin's
+  state hook blocks the plain forms of that; it is not a security boundary.
 - **The audit file can hold PII.** It stores the SQL text, and `WHERE phone = '...'` is
   SQL text.
+- **Other databases on the server.** The setup covers one database; by default the role can
+  connect to the others. `daypass doctor` lists them; `REVOKE CONNECT ON DATABASE <db> FROM
+  PUBLIC` closes it.
 - **Shared IAM identity.** The audit `who` is the AWS caller ARN. If your team shares one
   AWS login, the log cannot tell teammates apart.
 - **A column you forgot to list is not hidden.** `daypass hidden suggest` and
@@ -78,15 +132,15 @@ Read these before you run it against anything you care about. The full list is
 - **Reads hit whatever host you configure.** On a primary, the 10 s timeout and the
   5-connection cap are the only load protection; point the target at a replica if you can.
 - **Postgres only.** PostgreSQL 16 or newer is recommended (the guard parses with the 16+
-  grammar).
+  grammar, and only 16+ can grant `rds_iam` for login only).
 
 ## Reporting a hole
 
-See `SECURITY.md`: a private GitHub vulnerability report, or email security@vocobase.com.
+See `SECURITY.md`: email security@vocobase.com, or a private GitHub vulnerability report once that is enabled.
 Please do not open a public issue for anything that lets an agent read a hidden column, run
 a write, bypass a lease, escape the timeouts or leak a credential.
 
 Links: https://github.com/Sajal0208/daypass · https://www.npmjs.com/package/daypass ·
-<SITE_URL>
+https://daypass-lac.vercel.app
 
 MIT. Built by Vocobase.

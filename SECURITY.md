@@ -9,7 +9,8 @@ Only the latest minor line gets security fixes. Upgrade before reporting if you 
 
 | Version | Supported |
 |---|---|
-| 0.1.x | Yes |
+| 0.2.x | Yes |
+| 0.1.x | No: role setup holes, see GHSA-rjrr-9c6p-6wxc; upgrade and re-run the setup |
 | anything older | No |
 
 ## Reporting a vulnerability
@@ -20,12 +21,12 @@ server or CLI), or leak a credential. A direct `psql` session as the read-only r
 its own session settings by design (`daypass doctor` reports that drift); that is only a bug
 when it happens through Daypass.
 
-1. **Preferred:** open a private report on GitHub at
-   <https://github.com/Sajal0208/daypass/security/advisories/new> (GitHub private vulnerability
-   reporting). It keeps the report, the discussion and the fix in one place and lets us publish
-   an advisory with a CVE when the fix ships. If that page does not offer a report form yet,
-   private reporting is still being switched on: use email instead.
-2. **Otherwise:** email **security@vocobase.com**.
+- **Email** **security@vocobase.com**. This always works, and is the route to use if you are
+  unsure.
+- **GitHub private report** at
+  <https://github.com/Sajal0208/daypass/security/advisories/new>. It keeps the report, the
+  discussion and the fix in one place and lets us publish an advisory with a CVE when the fix
+  ships. If the page shows no report form, use email.
 
 Either way, include:
 
@@ -43,16 +44,19 @@ and was published by GitHub Actions with a long-lived npm token (the earlier wor
 `npm audit signatures` verifies a download. Ignore `0.0.0-stage`: it is a leftover from testing
 the publish flow, not a release.
 
-From the next release on, publishing moves to npm trusted publishing (OIDC): a SHA-pinned
-workflow builds and tests in one job and publishes the checked tarball from a separate job that
-runs in a GitHub environment with a required reviewer, and no long-lived npm token exists. That
-setup is still in progress (see *Maintainer setup (pending)* in CONTRIBUTING.md).
+Releases after 0.1.0 are meant to go out by npm trusted publishing (OIDC); the package page on
+npmjs.com shows how each version was published. A SHA-pinned workflow builds and tests in one
+job and publishes the checked tarball from a separate job that runs in the `npm-publish` GitHub environment, which requires a maintainer's approval and only admits `v*`
+tags. The workflow holds no npm token. Retiring the token the earlier workflow used, and setting
+npm to refuse token-based publishing, are still pending (see *Maintainer setup* in
+CONTRIBUTING.md).
 
 ## Scope
 
 In scope: the `daypass` package, `sql/setup-role.sql`, the MCP server and CLI, and the Claude
-Code plugin hook (`plugin/hooks/pii-guard.mjs`). A bypass of the hook is in scope, but it is a
-backup layer behind the role's grants, so it is rated lower than a hole in the grants.
+Code plugin hooks (`plugin/hooks/pii-guard.mjs`, `plugin/hooks/state-guard.mjs`). A bypass of
+a hook is in scope, but the hooks are backup layers behind the role's grants (the state guard
+matches command text and says so), so they are rated lower than a hole in the grants.
 
 Out of scope: your own database configuration (e.g. forgetting to list a column in the hidden
 list), weaknesses in Postgres or AWS themselves, and denial of service against your own database
@@ -64,8 +68,9 @@ for; tune them).
 The role's grants are the wall; everything in the client is a second fence. `setup-role.sql`
 guarantees that `daypass_ro` holds no INSERT, UPDATE, DELETE, TRUNCATE or TRIGGER on any
 relation, no USAGE or UPDATE on any sequence (no `nextval`/`setval`), no SELECT on a hidden
-column or table, owns no objects and is a member of no other role (the script refuses to run
-otherwise). If you can show that `daypass_ro` can read a hidden column or modify data in a
+column or table, owns no objects, is a member of no other role (on RDS, `rds_iam` for login
+only), has no `SUPERUSER`, `REPLICATION` or `BYPASSRLS`, and can reach no foreign server (the
+script refuses to run otherwise). If you can show that `daypass_ro` can read a hidden column or modify data in a
 table, that is a critical issue even if the client would have blocked the statement.
 
 It does not stop everything a direct session can do, by design: a `psql` session as the role can

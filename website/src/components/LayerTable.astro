@@ -14,11 +14,15 @@
 		<tr>
 			<th scope="row">DB role</th>
 			<td>
-				<code>SELECT</code> on visible columns only, granted table by table, and no write privilege
-				anywhere. PII and secret columns are hidden at the Postgres level, so <code>SELECT *</code> on
-				those tables fails; views that would expose one are not granted. Defaults:
+				<code>SELECT</code> on visible columns only, granted table by table (no default privileges),
+				and no write privilege anywhere. PII and secret columns are hidden at the Postgres level, so
+				<code>SELECT *</code> on those tables fails; views and materialized views that would expose
+				one, or that read (or stored) with their owner's rights what the role may not see, are not granted. The setup
+				refuses a role that keeps <code>REPLICATION</code> or <code>BYPASSRLS</code>, reaches a foreign server, or
+				sits behind default or catalog grants to <code>PUBLIC</code>; on RDS <code>rds_iam</code> is granted for
+				login only. Role defaults:
 				<code>default_transaction_read_only</code>, 10 s statement timeout, 1 s lock timeout; 5
-				connections. The role can change its own defaults in a direct session;
+				connections. The defaults are the role's own to change in a direct session;
 				<code>daypass doctor</code> reports drift.
 			</td>
 		</tr>
@@ -33,22 +37,24 @@
 			<th scope="row">Real parser</th>
 			<td>
 				Every statement goes through Postgres's own parser (<code>libpg-query</code>). One
-				statement of at most 256 KiB; <code>SELECT</code> or <code>EXPLAIN</code> only; no data-modifying CTE, <code>FOR UPDATE</code>, <code>SELECT INTO</code>, <code>EXPLAIN ANALYZE</code>, <code>pg_sleep</code>, <code>dblink</code>, <code>pg_read_file</code>, <code>set_config</code>, <code>nextval</code>, advisory locks, <code>query_to_xml</code>, … The block list cannot cover every extension; the role's <code>EXECUTE</code> grants are the boundary there.
+				statement of at most 256 KiB; <code>SELECT</code> or <code>EXPLAIN</code> only; no data-modifying CTE, <code>FOR UPDATE</code>, <code>SELECT INTO</code>, <code>EXPLAIN ANALYZE</code>, <code>pg_sleep</code>, <code>dblink</code>, <code>pg_read_file</code>, <code>set_config</code>, <code>nextval</code>, advisory locks, <code>query_to_xml</code>, …, attribute notation such as <code>(x).pg_sleep</code> included. The block list cannot cover every extension's functions; the role's <code>EXECUTE</code> grants are the boundary there.
 			</td>
 		</tr>
 		<tr>
 			<th scope="row">Read-only transaction</th>
 			<td>
-				Each call runs in <code>BEGIN READ ONLY</code> with a timeout of 10 s or the lease time
-				left, whichever is shorter, and the session is reset afterwards. A call that is cut off is
+				Each call runs in <code>BEGIN READ ONLY</code> with a statement timeout of 10 s or the lease time
+				left, whichever is shorter, over the extended protocol (one command), and the session is reset
+				(<code>DISCARD ALL</code>) afterwards. A call that is cut off is
 				cancelled in the database too.
 			</td>
 		</tr>
 		<tr>
 			<th scope="row">Result caps</th>
 			<td>
-				500 rows and 1 MB per result, cut in the database before the rows are sent; 2000
-				characters per cell; 32 MiB on the wire per call.
+				500 rows, 2000 characters per cell and 1 MB (UTF-8 bytes) per result, all cut in the database before
+				the rows are sent; 32 MiB on the wire per call; database errors cut at 2000 characters and
+				labelled as data.
 			</td>
 		</tr>
 		<tr>
@@ -56,19 +62,22 @@
 			<td>
 				Two JSON lines per call in <code>~/.daypass/audit.jsonl</code>, one before the query runs
 				and one when it ends: time, caller (AWS ARN for IAM targets), lease id, reason, SQL, rows,
-				ms, error. Refusals get one line with the reason.
+				ms, error. Refusals get one line with the reason. Each field is capped; a statement over 16 KiB is
+				kept as a prefix plus its SHA-256.
 			</td>
 		</tr>
 		<tr>
 			<th scope="row">Network</th>
 			<td>
-				Optional: punch your current IP into the DB security group for the lease; removed on
-				close, on the first tool call after expiry, or by <code>daypass sweep</code>.
+				Optional: punch your current IP into the DB security group for the lease (<code>/32</code>,
+				or <code>/128</code> for IPv6); removed on
+				close, on the first tool call after expiry, or by <code>daypass sweep</code> (which only
+				touches rules Daypass wrote).
 			</td>
 		</tr>
 		<tr>
 			<th scope="row">TLS</th>
-			<td>Always verified. RDS targets (IAM, or any <code>*.rds.amazonaws.com</code> host) pin the bundled AWS RDS CA.</td>
+			<td>Always verified. RDS targets (IAM, or any <code>*.rds.amazonaws.com</code> host) pin the bundled AWS RDS CA and cannot turn TLS off.</td>
 		</tr>
 	</tbody>
 </table>
@@ -112,10 +121,34 @@
 	td:last-child {
 		padding-right: 0;
 	}
-	@media (max-width: 30em) {
+	/* Narrow screens: each layer stacks its name above its description instead of two columns. */
+	@media (max-width: 40em) {
+		thead {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip: rect(0 0 0 0);
+			white-space: nowrap;
+		}
+		tbody tr,
+		tbody th,
+		tbody td {
+			display: block;
+			width: auto;
+		}
+		tbody tr {
+			padding-block: 0.75rem;
+			border-bottom: 1px solid var(--sl-color-hairline-light);
+		}
 		tbody th {
 			white-space: normal;
-			min-width: 6rem;
+			padding: 0 0 0.25rem;
+			border-bottom: 0;
+		}
+		tbody td {
+			padding: 0;
+			border-bottom: 0;
 		}
 	}
 </style>

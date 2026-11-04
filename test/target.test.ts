@@ -15,7 +15,7 @@ describe('resolveTarget', () => {
     expect(t.user).toBe('other');
   });
   it('rds target needs no password', () => {
-    expect(resolveTarget('p', { host: 'h', database: 'd', user: 'u', region: 'eu-central-1' }).port).toBe(5432);
+    expect(resolveTarget('p', { host: 'h', database: 'd', user: 'u', region: 'us-east-1' }).port).toBe(5432);
   });
   it('rejects missing host', () => {
     expect(() => resolveTarget('p', { database: 'd', user: 'u', password: 'x' })).toThrow(/missing "host"/);
@@ -26,10 +26,22 @@ describe('resolveTarget', () => {
 });
 
 describe('isRdsHost', () => {
-  it.each(['my-db.abc123.eu-central-1.rds.amazonaws.com', 'MY-DB.ABC123.US-EAST-1.RDS.AMAZONAWS.COM'])('true for %s', (h) =>
+  it.each([
+    'my-db.abc123.us-east-1.rds.amazonaws.com',
+    'MY-DB.ABC123.US-WEST-2.RDS.AMAZONAWS.COM',
+    'my-db.abc123.us-east-1.rds.amazonaws.com.',
+    'my-db.abc123.cn-north-1.rds.amazonaws.com.cn',
+    'my-db.abc123.cn-north-1.rds.amazonaws.com.cn.',
+    'my-db.abc123.us-gov-west-1.rds.amazonaws.com',
+    'my-db.abc123.eusc-de-east-1.rds.amazonaws.eu',
+    'my-db.abc123.us-iso-east-1.rds.c2s.ic.gov',
+    'my-db.abc123.us-isob-east-1.rds.sc2s.sgov.gov',
+    'my-db.abc123.eu-isoe-west-1.rds.cloud.adc-e.uk',
+    'my-db.abc123.us-isof-south-1.rds.csp.hci.ic.gov',
+  ])('true for %s', (h) =>
     expect(isRdsHost(h)).toBe(true),
   );
-  it.each(['localhost', 'db.example.com', 'rds.amazonaws.com.evil.example', 'notrds.amazonaws.com'])('false for %s', (h) =>
+  it.each(['localhost', 'db.example.com', 'rds.amazonaws.com.evil.example', 'notrds.amazonaws.com', 'x.abc123.us-east-1.rds.amazonaws.com..', 'x.abc123.cn-north-1.rds.amazonaws.com.cn.evil'])('false for %s', (h) =>
     expect(isRdsHost(h)).toBe(false),
   );
 });

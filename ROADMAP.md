@@ -23,7 +23,8 @@ What ships today, so the rest of this page has a baseline.
 - Audit: a start and an end line per call in `~/.daypass/audit.jsonl`.
 - Optional per-lease security-group rule for your current IP, removed on close, on the first
   tool call after expiry, or by `daypass sweep`.
-- A Claude Code plugin that registers the MCP server and ships the usage skill and a PII hook.
+- A Claude Code plugin that registers the MCP server and ships the usage skill, a PII hook and a
+  hook that keeps the agent out of `~/.daypass`.
 
 ## Next (0.2)
 
