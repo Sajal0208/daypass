@@ -412,3 +412,46 @@ describe('review fixes (PR #29): close, open and sweep with several leases', () 
     expect(r.stderr).toMatch(/until they expire/);
   });
 });
+
+describe('review fixes (PR #29): the MCP server with several leases', () => {
+  it('a call on a live target does not wait for the revoke of another, expired lease', async () => {
+    const server = await import('../src/mcp/server.js');
+    server.setNetworkReleaseWaitForTests(2000);
+    try {
+      config({ region: 'us-east-1', securityGroupId: 'sg-1' });
+      fake.rules.push({ id: 'sgr-old', groupId: 'sg-1', description: `daypass:aaaa1111 until ${past}` });
+      put({ version: 2, leases: [
+        lease({ expiresAt: past, sgRuleId: 'sgr-old', sgRegion: 'us-east-1', sgGroupId: 'sg-1' }),
+        lease({ id: 'bbbb2222', target: 'dev' }),
+      ] });
+      fake.revokeDelayMs = 1500;
+      const t0 = Date.now();
+      await call('list_tables', { target: 'dev' });
+      expect(Date.now() - t0).toBeLessThan(1200);
+      await new Promise((r) => setTimeout(r, 1800)); // the revoke still finishes in the background
+      expect(fake.rules).toEqual([]);
+    } finally {
+      server.setNetworkReleaseWaitForTests(undefined);
+    }
+  }, 15_000);
+
+  it('a server audit line names the only live lease when an expired one is also on disk', async () => {
+    const { buildServer, auditLifecycle } = await import('../src/mcp/server.js');
+    put({ version: 2, leases: [lease({ id: 'live1111', target: 'dev' }), lease({ id: 'old22222', expiresAt: past })] });
+    const s = buildServer();
+    auditLifecycle(s);
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    await s.connect(st);
+    const c = new Client({ name: 'audit-test', version: '0' });
+    await c.connect(ct);
+    await c.close();
+    let last: any;
+    for (let i = 0; i < 50; i++) {
+      const lines = existsSync(join(home, 'audit.jsonl')) ? readFileSync(join(home, 'audit.jsonl'), 'utf8').trim().split('\n') : [];
+      last = lines.length ? JSON.parse(lines[lines.length - 1]) : null;
+      if (last?.tool === 'server') break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(last).toMatchObject({ tool: 'server', leaseId: 'live1111', target: 'dev' });
+  });
+});

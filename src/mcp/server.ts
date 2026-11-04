@@ -115,9 +115,14 @@ async function ctx(target?: string): Promise<Ctx | string> {
   } catch (e) {
     return errorMessage(e);
   }
-  await Promise.all(leases.filter((l) => shouldReleaseNetwork(l)).map(releaseExpiredNetwork));
+  // Every expired lease's rule is revoked on sight. A call waits only for the ones it is refused
+  // about; a call on a live lease lets the others finish in the background.
+  const releasing = leases.filter((l) => shouldReleaseNetwork(l)).map((l) => ({ l, done: releaseExpiredNetwork(l) }));
   const pick = pickLease(leases, target);
-  if (pick.error !== undefined) return pick.error;
+  if (pick.error !== undefined) {
+    await Promise.all(releasing.filter((r) => target === undefined || r.l.target === target).map((r) => r.done));
+    return pick.error;
+  }
   const lease = pick.lease;
   const raw = (await readConfig()).targets[lease.target];
   if (!raw) return `Lease target "${lease.target}" is not in config.`;
@@ -417,7 +422,9 @@ export function buildServer(): McpServer {
 /** Server-level audit line (no tool call to hang it on): crashes caught and shutdowns. */
 async function auditServer(error: string): Promise<void> {
   const ls = await readLeases().catch((): Lease[] => []);
-  const lease = ls.length === 1 ? ls[0] : null;
+  const live = ls.filter((l) => isLeaseLive(l));
+  // The lease the session was using, when that is clear: the only one, or the only live one.
+  const lease = ls.length === 1 ? ls[0] : live.length === 1 ? live[0] : null;
   await appendAudit({
     at: new Date().toISOString(),
     who: lease?.who ?? 'daypass',
