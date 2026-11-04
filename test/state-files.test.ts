@@ -221,6 +221,11 @@ describe('lease.json: one lease per target', () => {
       await expect(state.readLeases()).rejects.toThrow(/corrupt/);
     }
   });
+  it('two opens of the same target at once: exactly one wins', async () => {
+    const { state } = await fresh();
+    const rs = await Promise.all([1, 2, 3].map((i) => state.writeLease({ ...lease, id: `r${i}` }, { ifId: null })));
+    expect(rs.filter(Boolean)).toHaveLength(1);
+  });
   it('corrupt file: an unconditional write and clearLease(target) refuse; ifId returns false; clearLease() removes it', async () => {
     const { home, state } = await fresh((h) => writeFileSync(join(h, 'lease.json'), '{nope', { mode: 0o600 }));
     await expect(state.writeLease(lease)).rejects.toThrow(/corrupt/);

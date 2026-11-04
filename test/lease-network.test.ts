@@ -268,8 +268,54 @@ describe('daypass open', () => {
     put(lease({ id: 'live0000', target: 'dev' }));
     const r = await cli('open', 'dev', '-r', 'again', '--no-network');
     expect(r.code).toBe(1);
-    expect(r.stderr).toMatch(/already open.*daypass close/);
+    expect(r.stderr).toMatch(/already open on "dev".*daypass close dev/);
     expect(JSON.parse(readFileSync(LEASE, 'utf8')).id).toBe('live0000');
+  });
+
+  it('two targets: both open, status lists both, close <t> closes one, close closes all', async () => {
+    config({});
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ targets: {
+      a: { url: 'postgres://u:p@db.invalid/a?sslmode=disable' },
+      b: { url: 'postgres://u:p@db.invalid/b?sslmode=disable' },
+    } }), { mode: 0o600 });
+    rmSync(LEASE, { force: true });
+    expect((await cli('open', 'a', '-r', 'x', '--no-network')).code).toBe(0);
+    expect((await cli('open', 'b', '-r', 'y', '--no-network')).code).toBe(0);
+    const s = await cli('status');
+    expect(s.stdout).toMatch(/on "a"/);
+    expect(s.stdout).toMatch(/on "b"/);
+    const c1 = await cli('close', 'b');
+    expect(c1.stdout).toMatch(/closed/);
+    expect(JSON.parse(readFileSync(LEASE, 'utf8')).target).toBe('a');   // back to the 0.2.0 shape
+    expect((await cli('close', 'b')).stdout).toMatch(/No lease on "b"/);
+    expect((await cli('open', 'b', '-r', 'y', '--no-network')).code).toBe(0);
+    const c2 = await cli('close');
+    expect(c2.stdout.match(/closed/g)).toHaveLength(2);
+    expect(existsSync(LEASE)).toBe(false);
+  });
+
+  it('refuses a second target behind the same security group and port, before touching AWS', async () => {
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ targets: {
+      prod: { host: 'db.invalid', database: 'd', user: 'u', region: 'us-east-1', securityGroupId: 'sg-1' },
+      prod2: { host: 'db.invalid', database: 'd2', user: 'u', region: 'us-east-1', securityGroupId: 'sg-1' },
+    } }), { mode: 0o600 });
+    put(lease({ sgRuleId: 'sgr-a', sgRegion: 'us-east-1', sgGroupId: 'sg-1', sgPort: 5432 }));
+    fake.calls.length = 0;
+    const r = await cli('open', 'prod2', '-r', 'x');
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/same security-group rule as the live lease on "prod"/);
+    expect(fake.calls.filter((c) => c.Action === 'AuthorizeSecurityGroupIngress')).toEqual([]);
+    expect(JSON.parse(readFileSync(LEASE, 'utf8')).target).toBe('prod');
+  });
+
+  it('sweep <target> with a corrupt lease file: sweeps AWS, then says the file is corrupt and exits 1', async () => {
+    config({ region: 'us-east-1', securityGroupId: 'sg-1' });
+    fake.rules.push({ id: 'sgr-x', groupId: 'sg-1', description: `daypass:abcd1234 until ${past}` });
+    put('{nope');
+    const r = await cli('sweep', 'prod');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toMatch(/Removed 1 expired rule/);
+    expect(r.stderr).toMatch(/corrupt.*daypass close/);
   });
 });
 
