@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.2.1](https://github.com/Sajal0208/daypass/compare/v0.2.0...v0.2.1) (2026-11-04)
+
+
+Several leases at once, one per target: `daypass open a`, then `daypass open b`. Nothing changes until you open a second lease. Upgrade every daypass on the machine and restart Claude Code sessions first (0.2.0 reads a file with two leases as corrupt); to downgrade with several leases open, run `daypass close` with 0.2.1 first.
+
+### Features
+
+* several leases at once, one per target ([#29](https://github.com/Sajal0208/daypass/issues/29)) ([31dc070](https://github.com/Sajal0208/daypass/commit/31dc070b347275b3e82b0e3875b32440d0f86b2d))
+
+### Leases (`open`, `close`, `sweep`, `status`, `doctor`)
+
+- One live lease per target. `open` refuses only when the same target already has a live lease, and refuses, before any AWS call, a second target behind the same security group, region and port. A lease closed while AWS was still making its rule is never brought back: the new rule is revoked and `open` fails.
+- `~/.daypass/lease.json` keeps its path and, with one lease, its 0.2.0 shape. With two or more it is `{ "version": 2, "leases": [ … ] }`, at most one per target. Every write is a read-modify-write under the lease lock; a stale lock is broken by one waiter, atomically. A corrupt file never drops another target's lease or its security-group rule id silently.
+- `close <target>` closes one lease; bare `close` closes all and keeps going past a lease whose rule AWS could not revoke (it lists them and exits 1). Only bare `close` removes a corrupt file; `close <target>` refuses.
+- `sweep <target>` sweeps AWS first, then reports a corrupt lease file (exit 1), and keeps an expired lease whose rule lives in another group. `status` lists every lease. `doctor` checks the lease of the named target.
+
+### MCP server
+
+- `list_tables`, `describe_table`, `query` and `explain` take an optional `target`. With one live lease it is optional; with two or more and no `target`, the call is refused and nothing runs. `daypass_status` prints one line per lease and a `Pass target: …` hint.
+- One connection pool per target. A call on a live lease no longer waits for another, expired lease's rule to be revoked, and a revoke that failed is not tried again on every call (once a minute).
+
+### Plugin
+
+- The skill passes `target` whenever the question names a database, asks which database when it does not, and suggests `daypass close <target>`. New evals `two-leases` and `lease-on-other-db`.
+- Known limit: the PII hook still uses one hidden-columns list for every target (`DAYPASS_HIDDEN_FILE`, else `~/.daypass/hidden-columns.txt`). Each target's role grants are the wall and are unchanged.
+
 ## [0.2.0](https://github.com/Sajal0208/daypass/compare/v0.1.1...v0.2.0) (2026-11-04)
 
 Security fixes from the 2026-10-30 and 2026-11-01 reviews (advisory [GHSA-rjrr-9c6p-6wxc](https://github.com/Sajal0208/daypass/security/advisories/GHSA-rjrr-9c6p-6wxc)). **Everyone on 0.1.x: upgrade, then re-run the role setup** (`daypass sql --hide-file … | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1`) and `daypass doctor`. The 0.1.0 role can read hidden columns through views, materialized views, partitions, inheritance children and `SECURITY DEFINER` functions that touch them, and can write through a `SECURITY DEFINER` function that writes.
