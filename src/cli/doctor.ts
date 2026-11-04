@@ -5,9 +5,13 @@ import { fromIni } from '@aws-sdk/credential-providers';
 import { isLeaseLive } from '../core/index.js';
 import { promises as fs } from 'node:fs';
 import { ancestorColumns, canonicalEntries, expandHidden, parseHiddenEntry, parseHiddenFile, viewLeaks, HIDDEN_RELKINDS } from '../core/hidden.js';
+import { MATVIEW_LEAKS_SQL, MATVIEW_SQL_PARAMS, UNREADABLE_SOURCES_SQL, USER_SCHEMA } from '../core/matview.js';
+import { printable } from './log.js';
 import { catalog, PIN_SEARCH_PATH } from './hidden.js';
 import type pg from 'pg';
-import { readConfig, readLease, resolveTarget, getPool, closePool, CONFIG_PATH } from '../mcp/index.js';
+import { readConfig, readLease, readAuditDetailed, resolveTarget, getPool, closePool, CONFIG_PATH, AUDIT_PATH, DAYPASS_HOME } from '../mcp/index.js';
+import { inspectStateFiles } from '../mcp/state.js';
+import { rdsCa, sslOptions } from '../mcp/db.js';
 
 type Check = { name: string; ok: boolean; detail: string };
 
@@ -105,9 +109,102 @@ export function runsSqlFromString(args: string): boolean {
     .some((a) => /^(?:(?:IN|INOUT|VARIADIC)\s+)?(?:\w+_)?(?:query|sql|stmt|statement|command)(?:_\w+)?\s+(?:text|character varying|varchar|name)\b/i.test(a.trim()));
 }
 
-const few = (xs: string[], n = 5) => `${xs.slice(0, n).join(', ')}${xs.length > n ? ', …' : ''}`;
-/** Schemas a role setup never reads or writes. */
-const USER_SCHEMA = `n.nspname not in ('pg_catalog', 'information_schema') and n.nspname !~ '^pg_(toast|temp)'`;
+/** The first `n` names, escaped (they come from the database). */
+const few = (xs: string[], n = 5) => printable(`${xs.slice(0, n).join(', ')}${xs.length > n ? ', …' : ''}`);
+export { MATVIEW_LEAKS_SQL, MATVIEW_SAFE_CATALOGS, MATVIEW_SAFE_FUNCTIONS } from '../core/matview.js';
+
+/** rds_iam before PostgreSQL 16: what it holds, any of which SET ROLE rds_iam reaches. */
+const RDS_IAM_HOLDINGS_SQL = `
+select x from (
+  select case when d.dbid in (0, (select oid from pg_catalog.pg_database where datname = pg_catalog.current_database()))
+              then case d.deptype when 'o' then 'owns ' else 'is named in the privileges of ' end || pg_catalog.pg_describe_object(d.classid, d.objid, d.objsubid)
+              else 'holds privileges or objects in database ' || (select pg_catalog.quote_ident(datname) from pg_catalog.pg_database where oid = d.dbid) end as x
+    from pg_catalog.pg_shdepend d
+   where d.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass and d.refobjid = (select oid from pg_catalog.pg_roles where rolname = 'rds_iam')
+  union all
+  select 'is a member of ' || r.rolname from pg_catalog.pg_auth_members m join pg_catalog.pg_roles r on r.oid = m.roleid
+   where m.member = (select oid from pg_catalog.pg_roles where rolname = 'rds_iam')
+  union all
+  select 'has attribute ' || a from pg_catalog.pg_roles r,
+         unnest(array[case when r.rolsuper then 'SUPERUSER' end, case when r.rolreplication then 'REPLICATION' end,
+                      case when r.rolbypassrls then 'BYPASSRLS' end, case when r.rolcreatedb then 'CREATEDB' end,
+                      case when r.rolcreaterole then 'CREATEROLE' end]) a
+   where r.rolname = 'rds_iam' and a is not null) q
+order by 1`;
+
+/** Grants on pg_catalog / information_schema objects to PUBLIC or the role beyond what a fresh cluster has (pg_init_privs). */
+const CATALOG_GRANTS_SQL = `
+select distinct x from (
+  select pg_catalog.format('%s on %s.%I%s to %s', a.privilege_type, cn.nspname, c.relname,
+           case when o.sub = 0 then '' else pg_catalog.format(' (%I)', (select attname from pg_catalog.pg_attribute where attrelid = c.oid and attnum = o.sub)) end,
+           case when a.grantee = 0 then 'PUBLIC' else current_user end) as x
+    from pg_catalog.pg_class c join pg_catalog.pg_namespace cn on cn.oid = c.relnamespace,
+         lateral (select 0::int2 as sub, c.relacl as acl, pg_catalog.acldefault(case when c.relkind = 'S' then 's' else 'r' end::"char", c.relowner) as dflt
+                  union all
+                  select pa.attnum, pa.attacl, null::aclitem[] from pg_catalog.pg_attribute pa where pa.attrelid = c.oid and pa.attnum > 0 and pa.attacl is not null) o,
+         pg_catalog.aclexplode(o.acl) a
+   where cn.nspname in ('pg_catalog', 'information_schema')
+     and a.grantee in (0, (select oid from pg_catalog.pg_roles where rolname = current_user))
+     and not (cn.nspname = 'information_schema' and a.grantee = 0 and a.privilege_type = 'SELECT' and o.sub = 0)
+     and not exists (select 1 from pg_catalog.aclexplode(coalesce((select i.initprivs from pg_catalog.pg_init_privs i
+                                                                    where i.classoid = 'pg_catalog.pg_class'::pg_catalog.regclass and i.objoid = c.oid and i.objsubid = o.sub), o.dflt)) b
+                      where b.grantee = a.grantee and b.privilege_type = a.privilege_type)
+  union all
+  select pg_catalog.format('%s on function %s to %s', a.privilege_type, p.oid::pg_catalog.regprocedure, case when a.grantee = 0 then 'PUBLIC' else current_user end)
+    from pg_catalog.pg_proc p join pg_catalog.pg_namespace pn on pn.oid = p.pronamespace, pg_catalog.aclexplode(p.proacl) a
+   where pn.nspname in ('pg_catalog', 'information_schema')
+     and a.grantee in (0, (select oid from pg_catalog.pg_roles where rolname = current_user))
+     and not exists (select 1 from pg_catalog.aclexplode(coalesce((select i.initprivs from pg_catalog.pg_init_privs i
+                                                                    where i.classoid = 'pg_catalog.pg_proc'::pg_catalog.regclass and i.objoid = p.oid and i.objsubid = 0),
+                                                                   pg_catalog.acldefault('f', p.proowner))) b
+                      where b.grantee = a.grantee and b.privilege_type = a.privilege_type)) q
+order by 1`;
+
+const octal = (m: number) => m.toString(8).padStart(4, '0');
+
+/**
+ * ~/.daypass (DAYPASS_HOME) and its files, by the rules every read and write applies: a symlink,
+ * a wrong file type or another owner fails (daypass refuses to use it). Bits for other users fail
+ * when they can write (someone else may already have changed the file) and are a warning when
+ * they can only read: daypass tightens its own files to 0700/0600 on the next use, but not
+ * hidden-columns.txt. Windows: symlink and file-type checks only.
+ */
+export async function filesCheck(): Promise<{ ok: boolean; detail: string }> {
+  const st = await inspectStateFiles();
+  if (!st.length) return { ok: true, detail: `${DAYPASS_HOME} does not exist yet (daypass init)` };
+  const refused = st.filter((f) => f.refused).map((f) => f.refused!);
+  const loose = st.filter((f) => !f.refused && f.mode !== undefined && f.mode & 0o077);
+  const writable = loose.filter((f) => f.mode! & 0o022);
+  const label = (f: (typeof st)[number]) => `${f.path} ${octal(f.mode!)} (want ${octal(f.want)})`;
+  const fix = (xs: typeof st) => xs.map((f) => `chmod ${octal(f.want).slice(1)} ${f.path}`).join('; ');
+  const readable = loose.filter((f) => !(f.mode! & 0o022));
+  if (refused.length || writable.length) {
+    return {
+      ok: false,
+      detail: [
+        ...refused,
+        ...(writable.length ? [`writable by other users: ${writable.map(label).join(', ')} — check the contents, then ${fix(writable)}`] : []),
+        ...(readable.length ? [`readable by other users: ${readable.map(label).join(', ')} (${fix(readable)})`] : []),
+      ].join('; '),
+    };
+  }
+  const names = st.slice(1).map((f) => f.path.slice(DAYPASS_HOME.length + 1));
+  const what = `${DAYPASS_HOME}${names.length ? ` and ${names.join(', ')}` : ''}`;
+  if (loose.length) return { ok: true, detail: `warning: readable by other users: ${loose.map(label).join(', ')} — daypass tightens its own files on next use (${fix(loose)})` };
+  return { ok: true, detail: st[0].mode === undefined ? `${what}: no symlinks` : `${what}: yours, no symlinks, 0700/0600` };
+}
+
+/** How the pool will connect, or why it refuses to (ssl: false on an RDS / IAM target, an unreadable sslCa). */
+function tlsCheck(t: Parameters<typeof sslOptions>[0]): { ok: boolean; detail: string } {
+  try {
+    const o = sslOptions(t, rdsCa());
+    if (!o) return { ok: true, detail: 'off (ssl: false / sslmode=disable): for a local database only' };
+    return { ok: true, detail: `verified against ${t.sslCa ? `sslCa ${t.sslCa}` : o.ca ? 'the bundled RDS CA' : 'the system CAs'}` };
+  } catch (e: any) {
+    const msg = e?.message || String(e);
+    return { ok: false, detail: t.sslCa && e?.code ? `cannot read sslCa ${t.sslCa}: ${msg}` : msg };
+  }
+}
 
 /** Runs one doctor check; a failure is that check's ✖ line, never a throw or a mislabelled "db login". */
 async function check(push: (name: string, ok: boolean, detail: string) => void, name: string, fn: () => Promise<void>): Promise<void> {
@@ -121,10 +218,18 @@ async function check(push: (name: string, ok: boolean, detail: string) => void, 
 /** Walks the whole chain for one target and reports each link. Never throws. */
 export async function doctor(targetName?: string, opts: { hideFile?: string } = {}): Promise<Check[]> {
   const out: Check[] = [];
-  const push = (name: string, ok: boolean, detail: string) => out.push({ name, ok, detail });
+  // Details carry names from the database, the config and the lease: a quoted identifier can hold
+  // escape sequences for the terminal, so every detail is escaped once, here.
+  const push = (name: string, ok: boolean, detail: string) => out.push({ name, ok, detail: printable(detail) });
 
   const major = Number(process.versions.node.split('.')[0]);
   push('node >= 20', major >= 20, `v${process.versions.node}`);
+
+  // Before anything reads them: the reads below tighten loose modes (with a warning on stderr).
+  await check(push, 'files', async () => {
+    const f = await filesCheck();
+    push('files', f.ok, f.detail);
+  });
 
   let cfg;
   try {
@@ -135,7 +240,23 @@ export async function doctor(targetName?: string, opts: { hideFile?: string } = 
     return out;
   }
 
-  const lease = await readLease();
+  await check(push, 'audit log', async () => {
+    const { events, corrupt } = await readAuditDetailed(0);
+    push(
+      'audit log',
+      true,
+      corrupt
+        ? `warning: ${corrupt} unreadable line(s) in ${AUDIT_PATH} (a torn write, or edited by hand); ${events.length} event(s) readable`
+        : `${events.length} event(s), all readable`,
+    );
+  });
+
+  let lease: Awaited<ReturnType<typeof readLease>> = null;
+  try {
+    lease = await readLease();
+  } catch (e: any) {
+    push('lease', false, e?.message || String(e));
+  }
   const name = targetName ?? lease?.target ?? Object.keys(cfg.targets)[0];
   if (!name) return out;
   const raw = cfg.targets[name];
@@ -152,6 +273,9 @@ export async function doctor(targetName?: string, opts: { hideFile?: string } = 
     push('target', false, e.message);
     return out;
   }
+
+  const tls = tlsCheck(t);
+  push('tls', tls.ok, tls.detail);
 
   try {
     const a = await lookup(t.host);
@@ -174,9 +298,9 @@ export async function doctor(targetName?: string, opts: { hideFile?: string } = 
   push('tcp', port === 'open', `${t.host}:${t.port} ${port}`);
 
   const live = !!lease && isLeaseLive(lease) && lease.target === name;
-  push('lease', live, live ? `${lease!.id} until ${lease!.expiresAt}` : `none open for "${name}" (daypass open ${name} --reason ...)`);
+  if (!out.some((c) => c.name === 'lease')) push('lease', live, live ? `${lease!.id} until ${lease!.expiresAt}` : `none open for "${name}" (daypass open ${name} --reason ...)`);
 
-  if (live && port === 'open') {
+  if (live && port === 'open' && tls.ok) {
     // One session for every check, with search_path pinned to pg_catalog and every catalog name
     // qualified (except the multi-argument unnest(...) in FROM, which is grammar and only exists
     // unqualified; the pinned search_path covers it): the role may have CREATE somewhere and its own search_path setting, and could
@@ -208,7 +332,7 @@ export async function doctor(targetName?: string, opts: { hideFile?: string } = 
     // what the setup script wrote. A per-database entry overrides rolconfig and is not shown in it.
     await check(push, 'role settings', async () => {
       const role = await p.query(
-        `select r.rolconfig, r.rolsuper, r.rolcreaterole, r.rolcreatedb,
+        `select r.rolconfig, r.rolsuper, r.rolcreaterole, r.rolcreatedb, r.rolreplication, r.rolbypassrls,
                 pg_catalog.has_database_privilege(current_user, pg_catalog.current_database(), 'TEMP') as temp,
                 pg_catalog.has_database_privilege(current_user, pg_catalog.current_database(), 'CREATE') as dbcreate,
                 pg_catalog.shobj_description(r.oid, 'pg_authid') as comment, pg_catalog.current_database() as db,
@@ -237,6 +361,7 @@ export async function doctor(targetName?: string, opts: { hideFile?: string } = 
           where ${USER_SCHEMA}
             and case when c.relkind = 'S' then pg_catalog.has_sequence_privilege(current_user, c.oid, 'USAGE, UPDATE')
                      when c.relkind in (${RELKINDS}) then pg_catalog.has_table_privilege(current_user, c.oid, $1)
+                                                       or pg_catalog.has_any_column_privilege(current_user, c.oid, 'INSERT, UPDATE')
                      else false end
           order by 1`,
         [privs],
@@ -259,7 +384,7 @@ export async function doctor(targetName?: string, opts: { hideFile?: string } = 
       const creatable = cs.rows.map((x) => x.nspname as string);
       const objs = owned.rows.map((x) => x.obj as string);
       const roles = member.rows.map((x) => x.rolname as string);
-      const attrs = [rr.rolsuper && 'SUPERUSER', rr.rolcreaterole && 'CREATEROLE', rr.rolcreatedb && 'CREATEDB'].filter(Boolean) as string[];
+      const attrs = [rr.rolsuper && 'SUPERUSER', rr.rolreplication && 'REPLICATION', rr.rolbypassrls && 'BYPASSRLS', rr.rolcreaterole && 'CREATEROLE', rr.rolcreatedb && 'CREATEDB'].filter(Boolean) as string[];
       const problems = [
         ...(attrs.length ? [`role has ${attrs.join(', ')}`] : []),
         ...(writable.length ? [`can write ${writable.length} relation(s)/sequence(s): ${few(writable)}`] : []),
@@ -273,7 +398,7 @@ export async function doctor(targetName?: string, opts: { hideFile?: string } = 
         problems.length === 0,
         problems.length
           ? `${problems.join('; ')} — role is not read-only!`
-          : `no write privilege in any schema; no CREATE; owns nothing; no other roles; no SUPERUSER/CREATEROLE/CREATEDB; temp tables ${rr.temp ? 'allowed (PUBLIC has TEMP; daypass sql --revoke-public-temp)' : 'denied'}`,
+          : `no write privilege in any schema; no CREATE; owns nothing; no other roles; no SUPERUSER/REPLICATION/BYPASSRLS/CREATEROLE/CREATEDB; temp tables ${rr.temp ? 'allowed (PUBLIC has TEMP; daypass sql --revoke-public-temp)' : 'denied'}`,
       );
     });
 
@@ -291,6 +416,129 @@ export async function doctor(targetName?: string, opts: { hideFile?: string } = 
       );
       const rels = o.rows.map((x) => x.rel as string);
       push('other schemas', rels.length === 0, rels.length ? `can read ${rels.length} relation(s) outside ${schemas.join(', ')}: ${few(rels)}` : `nothing readable outside ${schemas.join(', ')}`);
+    });
+
+    // rds_iam (RDS only): IAM login needs the membership, never rds_iam's privileges. From PG 16
+    // the grant must carry no SET / INHERIT / ADMIN; before 16 SET ROLE rds_iam always works, so
+    // rds_iam itself must hold nothing.
+    await check(push, 'rds_iam', async () => {
+      const mem = await p.query(
+        `select pg_catalog.pg_has_role(current_user, r.oid, 'MEMBER') as member from pg_catalog.pg_roles r where r.rolname = 'rds_iam'`,
+      );
+      if (!mem.rows.length) return; // not RDS: nothing to report
+      if (!mem.rows[0].member) {
+        push('rds_iam', true, 'not a member (IAM login needs it on RDS)');
+        return;
+      }
+      let problems: string[];
+      if (version >= 160000) {
+        const g = await p.query(
+          `select pg_catalog.pg_get_userbyid(m.grantor) as grantor, m.set_option, m.inherit_option, m.admin_option
+             from pg_catalog.pg_auth_members m
+            where m.roleid = (select oid from pg_catalog.pg_roles where rolname = 'rds_iam')
+              and m.member = (select oid from pg_catalog.pg_roles where rolname = current_user)
+              and (m.set_option or m.inherit_option or m.admin_option)`,
+        );
+        problems = g.rows.map((x) => `granted by ${x.grantor} with ${[x.set_option && 'SET', x.inherit_option && 'INHERIT', x.admin_option && 'ADMIN'].filter(Boolean).join(', ')}`);
+      } else {
+        problems = (await p.query(RDS_IAM_HOLDINGS_SQL)).rows.map((x) => `rds_iam ${x.x}`);
+      }
+      push(
+        'rds_iam',
+        problems.length === 0,
+        problems.length
+          ? `${few(problems)} — the role can use what rds_iam holds (SET ROLE); re-run daypass sql${version >= 160000 ? ' (it grants rds_iam WITH INHERIT FALSE, SET FALSE)' : ', after revoking those from rds_iam'}`
+          : version >= 160000 ? 'member WITH INHERIT FALSE, SET FALSE (login only)' : 'member; rds_iam holds nothing',
+      );
+    });
+
+    // Foreign servers: USAGE (or a wrapper's USAGE, to create one) and a user mapping for the role
+    // or PUBLIC let dblink / postgres_fdw log in with stored credentials, out of every grant's reach.
+    await check(push, 'foreign servers', async () => {
+      const f = await p.query(
+        `select x from (
+           select pg_catalog.format('USAGE on server %I', s.srvname) as x from pg_catalog.pg_foreign_server s
+            where pg_catalog.has_server_privilege(current_user, s.oid, 'USAGE')
+           union all
+           select pg_catalog.format('USAGE on foreign-data wrapper %I', w.fdwname) from pg_catalog.pg_foreign_data_wrapper w
+            where pg_catalog.has_foreign_data_wrapper_privilege(current_user, w.oid, 'USAGE')
+           union all
+           select pg_catalog.format('user mapping for %s on server %I', case when u.umuser = 0 then 'PUBLIC' else u.usename::text end, u.srvname)
+             from pg_catalog.pg_user_mappings u where u.umuser in (0, (select oid from pg_catalog.pg_roles where rolname = current_user))) q
+          order by 1`,
+      );
+      const xs = f.rows.map((x) => x.x as string);
+      push('foreign servers', xs.length === 0, xs.length ? `${few(xs)} — REVOKE USAGE ON FOREIGN SERVER ... / DROP USER MAPPING as the owner` : 'no foreign server reachable');
+    });
+
+    // Default privileges for PUBLIC make every new table / sequence / schema readable at once,
+    // before anyone reviews it (EXECUTE on functions and USAGE on types are Postgres' defaults).
+    // Ones for the role itself are removed by the setup.
+    await check(push, 'default privileges', async () => {
+      const d = await p.query(
+        `select distinct pg_catalog.format('%s on new %s%s for %s (set by %s)', a.privilege_type,
+                  case d.defaclobjtype when 'r' then 'tables' when 'S' then 'sequences' when 'f' then 'functions' when 'T' then 'types' when 'n' then 'schemas' else d.defaclobjtype::text end,
+                  case when d.defaclnamespace = 0 then '' else ' in schema ' || (select pg_catalog.quote_ident(nspname) from pg_catalog.pg_namespace where oid = d.defaclnamespace) end,
+                  case when a.grantee = 0 then 'PUBLIC' else current_user end, pg_catalog.pg_get_userbyid(d.defaclrole)) as x
+           from pg_catalog.pg_default_acl d, pg_catalog.aclexplode(d.defaclacl) a
+          where (a.grantee = (select oid from pg_catalog.pg_roles where rolname = current_user))
+             or (a.grantee = 0 and not (d.defaclobjtype = 'f' and a.privilege_type = 'EXECUTE') and not (d.defaclobjtype = 'T' and a.privilege_type = 'USAGE'))
+          order by 1`,
+      );
+      const xs = d.rows.map((x) => x.x as string);
+      push('default privileges', xs.length === 0, xs.length ? `${few(xs)} — as that owner: ALTER DEFAULT PRIVILEGES [IN SCHEMA s] REVOKE ALL ON TABLES FROM PUBLIC (or SEQUENCES / SCHEMAS)` : 'none for PUBLIC or the role');
+    });
+
+    // System catalogs as initdb left them (pg_init_privs): an extra grant to PUBLIC or the role
+    // (SELECT on pg_statistic / pg_authid / pg_largeobject, EXECUTE on pg_read_file, ...).
+    await check(push, 'catalog grants', async () => {
+      const xs = (await p.query(CATALOG_GRANTS_SQL)).rows.map((x) => x.x as string);
+      push('catalog grants', xs.length === 0, xs.length ? `beyond a fresh cluster's: ${few(xs)} — REVOKE them` : 'as a fresh cluster has them');
+    });
+
+    // Materialized views store what their OWNER saw at refresh: through a catalog that filters by
+    // caller (pg_stats, pg_stat_activity, ...), a function (current_setting, query_to_xml, ...),
+    // or row-level security, directly or through the views they read.
+    let leaks: { rel: string; mv: string; why: string; kind: string }[] = [];
+    await check(push, 'materialized views', async () => {
+      leaks = (await p.query(MATVIEW_LEAKS_SQL, MATVIEW_SQL_PARAMS)).rows;
+      const xs = leaks.filter((x) => x.kind === 'm').map((x) => (x.rel === x.mv ? `${x.rel} ${x.why}` : `${x.rel} (over materialized view ${x.mv}, which ${x.why})`));
+      push('materialized views', xs.length === 0, xs.length ? `readable, stored as the owner: ${few(xs)} — REVOKE SELECT, then re-run daypass sql` : 'none readable stores what only the owner could see');
+    });
+
+    // A plain view reads its tables with its OWNER's rights (unless security_invoker, PG 15+):
+    // row-level security filters for the owner (who, without FORCE ROW LEVEL SECURITY, sees every
+    // row), and a relation the role cannot read at all (a sequence the setup withheld) is read anyway.
+    await check(push, 'views as owner', async () => {
+      const rls = leaks.filter((x) => x.kind === 'v').map((x) => (x.rel === x.mv ? `${x.rel} ${x.why}` : `${x.rel} (over view ${x.mv}, which ${x.why})`));
+      const unreadable = (await p.query(UNREADABLE_SOURCES_SQL)).rows.map((x) => `${x.rel} reads ${x.ref}, which the role cannot read`);
+      const xs = [...rls, ...unreadable];
+      push(
+        'views as owner',
+        xs.length === 0,
+        xs.length
+          ? `readable views read as their owner: ${few(xs)} — REVOKE SELECT (or make the view security_invoker, PostgreSQL 15+), then re-run daypass sql`
+          : 'no readable view reads row-level-security data or an unreadable relation with its owner\'s rights',
+      );
+    });
+
+    // PUBLIC holds CONNECT on every new database: the role can log in to the others on this server,
+    // where none of the checks above ran. A warning: say which (REVOKE CONNECT ... FROM PUBLIC).
+    await check(push, 'other databases', async () => {
+      const d = await p.query(
+        `select d.datname from pg_catalog.pg_database d
+          where d.datallowconn and d.datname <> pg_catalog.current_database()
+            and pg_catalog.has_database_privilege(current_user, d.oid, 'CONNECT')
+          order by 1`,
+      );
+      const dbs = d.rows.map((x) => x.datname as string);
+      push(
+        'other databases',
+        true,
+        dbs.length
+          ? `warning: can connect to ${dbs.length} other database(s) on this server: ${few(dbs)} — nothing there was checked; as the owner: REVOKE CONNECT ON DATABASE <db> FROM PUBLIC (and grant your app roles)`
+          : 'cannot connect to any other database on this server',
+      );
     });
 
     // Hidden columns: the list the setup stored on the role, plus --hide-file. Fails when any

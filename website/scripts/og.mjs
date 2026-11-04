@@ -12,12 +12,16 @@ import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
-import { installCommand, ogImage, siteTagline, siteTitle, siteUrl } from '../src/lib/meta.ts';
+import { installCommand, ogImage, repoUrl, siteTagline, siteTitle } from '../src/lib/meta.ts';
 
 const publicDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const out = path.join(publicDir, 'og.png');
 
 const { width, height } = ogImage;
+
+// Bottom-right corner. The repository, not the site host: no domain is registered yet and
+// `siteUrl` defaults to a placeholder (see src/lib/meta.ts), which must not end up on the card.
+const cornerText = repoUrl.replace(/^https?:\/\//, '');
 
 // Palette: the site's dark background and the teal accent (Tailwind teal-400/600/950 shades).
 const BG = '#0b1215';
@@ -79,7 +83,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${
   <rect x="80" y="430" width="700" height="88" rx="14" fill="${PANEL}" stroke="${BORDER}" stroke-width="2"/>
   <text x="112" y="486" font-family="${MONO}" font-size="32" fill="${MUTED}">$ <tspan fill="${TEXT}">${esc(installCommand)}</tspan></text>
 
-  <text x="${width - 80}" y="${height - 48}" text-anchor="end" font-family="${MONO}" font-size="24" fill="${MUTED}">${esc(new URL(siteUrl).host)}</text>
+  <text x="${width - 80}" y="${height - 48}" text-anchor="end" font-family="${MONO}" font-size="24" fill="${MUTED}">${esc(cornerText)}</text>
 </svg>`;
 
 const png = await sharp(Buffer.from(svg), { density: 144 })

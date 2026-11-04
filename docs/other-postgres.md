@@ -22,18 +22,20 @@ The URL is parsed for host, port, database, user and password. Explicit fields (
 
 ```bash
 daypass sql --hide-file hidden-columns.txt | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1
-psql "$OWNER_URL" -c "ALTER ROLE daypass_ro PASSWORD 'CHANGE-ME'"
+psql "$OWNER_URL"        # then, at the prompt:  \password daypass_ro
 ```
+
+Use `\password` rather than `psql -c "ALTER ROLE ... PASSWORD '...'"`: it prompts for the value and sends only its hash, so the plain password stays out of your shell history, `psql`'s history and the server log.
 
 One thing to know:
 
-- The password sits in `~/.daypass/config.json` (mode `0600`) on each developer's machine. No tool returns it: the MCP server reads the config itself and the tools expose no connection details. The file is protected by OS user permissions only, though, so an agent you also allow to run shell commands or read files as you can read it; see the [threat model](threat-model.md). It is also a shared secret with no expiry; rotate it when someone leaves. Core Postgres lets a role change its own password, so a direct session with it could lock everyone else out; re-set it with `ALTER ROLE` as the owner. If you want "leaving the company revokes access" without rotation, that is what RDS IAM gives you.
+- The password sits in `~/.daypass/config.json` (mode `0600`) on each developer's machine. No tool returns it: the MCP server reads the config itself and the tools expose no connection details. The file is protected by OS user permissions only, though, so an agent you also allow to run shell commands or read files as you can read it; see the [threat model](threat-model.md). It is also a shared secret with no expiry; rotate it when someone leaves. Core Postgres lets a role change its own password, so a direct session with it could lock everyone else out; re-set it as the owner (`\password daypass_ro`). If you want "leaving the company revokes access" without rotation, that is what RDS IAM gives you.
 
-The role has `CONNECTION LIMIT 5`. Each running MCP server holds at most 2 connections, so two Claude Code sessions on two laptops fit; a third process can hit `too many connections for role "daypass_ro"`.
+The role has `CONNECTION LIMIT 5`. Each running MCP server (one per AI session) holds at most one connection and closes it after 5 idle seconds; its own concurrent calls queue for it. Five busy sessions at once fit; a sixth gets `too many connections for role "daypass_ro": the Daypass role's connection limit is reached. …`, and a retry a few seconds later usually works.
 
 ## TLS
 
-TLS is always verified; the only way to turn it off is `sslmode=disable` in the URL or `"ssl": false` on the target. Other `sslmode` values are not interpreted: `sslmode=require` still results in full certificate verification, which is stricter than what `psql` does with the same word.
+TLS is always verified; the only way to turn it off is `sslmode=disable` in the URL or `"ssl": false` on the target, and neither is accepted for an RDS host or a target with `region` (`TLS cannot be turned off for an RDS or IAM (region) target: remove ssl: false / sslmode=disable.`). Other `sslmode` values are not interpreted: `sslmode=require` still results in full certificate verification, which is stricter than what `psql` does with the same word.
 
 Verification uses the system CA store (RDS hosts excepted: they use the bundled RDS CA, see [AWS RDS](aws-rds.md)). If the server's certificate comes from the provider's own CA, `doctor` fails at `db login` with a certificate error (`self-signed certificate in certificate chain` or similar). Download the provider's CA bundle and point the target at it:
 
@@ -91,10 +93,11 @@ This is the only place `sslmode=disable` belongs. A quick end-to-end check again
 
 ```bash
 docker run --rm -d --name pg-daypass -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16
-export OWNER_URL=postgres://postgres:postgres@localhost:5432/postgres
 npm run build                  # from a checkout of the repo
-scripts/ci-integration.sh
+DAYPASS_CI_OWNER_URL=postgres://postgres:postgres@localhost:5432/postgres scripts/ci-integration.sh
 docker rm -f pg-daypass
 ```
+
+The script drops and recreates its test objects, so it takes its own `DAYPASS_CI_OWNER_URL` (it ignores `OWNER_URL`) and refuses any host other than `localhost`, `127.0.0.1` or `::1`. Never point it at a real database.
 
 The script creates a `customers` table with an `email` and a `secret` column, hides both, opens a lease, runs `doctor`, drives the MCP server through visible, hidden, write, multi-statement and expired cases, and prints `integration: OK`.

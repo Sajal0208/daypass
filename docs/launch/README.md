@@ -5,24 +5,26 @@ by itself.
 
 **Launch on the release after 0.1.0, not on 0.1.0.** 0.1.0 is published, but a security
 review on 2026-10-30 found holes in its role setup (see `release-notes-v0.1.0.md` and
-`CHANGELOG.md`). The posts describe the fixed release and refer to it as `<VERSION>`.
+`CHANGELOG.md`). The posts describe the fixed release and refer to it as `0.2.0`.
 
 ## Before posting anything
 
-- [ ] The fixed release is out. Replace every `<VERSION>` with its version and every
-      `<SITE_URL>` with the real website URL. `grep -rn '<SITE_URL>\|<VERSION>' docs/launch`
+- [ ] The fixed release is out. Placeholders filled on 2026-11-04: version 0.2.0, site
+      https://daypass-lac.vercel.app. `grep -rn '<SITE_URL>\|<VERSION>' docs/launch`
       must come back empty before you post.
 - [ ] `scripts/scrub-check.sh` is clean, and a manual grep of `docs/launch` for security-group ids, 12-digit account ids and RDS hosts shows only the
       `123456789012` account placeholder and the README's own placeholder host
-      `my-db.abc123.eu-central-1.rds.amazonaws.com`, or nothing. No real host, account,
+      `my-db.abc123.us-east-1.rds.amazonaws.com`, or nothing. No real host, account,
       security group, ARN or internal table name goes into a post.
-- [ ] `npm view daypass version` prints `<VERSION>` and `npm install -g daypass` works on a
+- [ ] `npm view daypass version` prints `0.2.0` and `npm install -g daypass` works on a
       clean machine.
-- [ ] The GitHub release `v<VERSION>` exists with `release-notes-next.md` as its body (or the
+- [ ] The GitHub release `v0.2.0` exists with `release-notes-next.md` as its body (or the
       release-please body with it appended), and the `v0.1.0` release body carries the
       superseded note from `release-notes-v0.1.0.md`.
-- [ ] Nothing in a post claims the release came through npm trusted publishing unless the
-      *Maintainer setup (pending)* steps in CONTRIBUTING.md are done.
+- [ ] The *Pending* list under *Maintainer setup* in CONTRIBUTING.md is done (old npm token
+      revoked, npm set to disallow tokens, rulesets on `main` and `v*`, private vulnerability
+      reporting on), and `npm view daypass@0.2.0` shows trusted-publishing provenance before
+      any post says so.
 - [ ] `docs/assets/demo.gif` and `docs/assets/demo-output.txt` are re-recorded with
       `scripts/record-demo.sh` on the fixed release (the 0.1.0 recording shows the old
       `doctor` output).
@@ -31,13 +33,17 @@ review on 2026-10-30 found holes in its role setup (see `release-notes-v0.1.0.md
 - [ ] `daypass hidden suggest` runs against a Prisma schema and against a live catalog.
 - [ ] The GIF for X post 1 is recorded: `daypass open`, one question in Claude Code, one
       `SELECT *` that fails on a hidden column, `daypass log`.
+- [ ] The Product Hunt gallery assets in `product-hunt.md` exist: the OG card
+      (`website/public/og.png`), the re-recorded demo GIF, the layers table as an image, the
+      two audit lines, the `SELECT *` denied screenshot; every one checked for a real host,
+      account id, security group or table name (only the two placeholders above may appear).
 - [ ] `security@vocobase.com` is monitored and GitHub private vulnerability reporting is
       on. SECURITY.md promises a reply within 3 working days.
 - [ ] Someone is free to answer comments for the first 6 hours after the Show HN goes up.
 
 ## Posting order
 
-1. **GitHub release** `v<VERSION>`: `release-notes-next.md`. Do this first so every other post
+1. **GitHub release** `v0.2.0`: `release-notes-next.md`. Do this first so every other post
    links to something that exists.
 2. **Show HN**: `show-hn.md`. Tuesday to Thursday, 14:00–16:00 UTC. Title is 78 characters
    (HN's limit is 80; "for AI coding agents" would make it 85, so the title says "for AI
@@ -46,8 +52,16 @@ review on 2026-10-30 found holes in its role setup (see `release-notes-v0.1.0.md
 4. **r/PostgreSQL**: `reddit-postgresql.md`, same day. It asks for a review of
    `sql/setup-role.sql`; be ready to act on what comes back.
 5. **r/ClaudeAI**: `reddit-claudeai.md`, the next day, so the two Reddit posts do not compete.
-6. **Blog**: `blog-the-wall.md` goes on the website at `<SITE_URL>`. Publish it before the Show HN
+6. **Blog**: `blog-the-wall.md` goes on the website at `https://daypass-lac.vercel.app`. Publish it before the Show HN
    if the site is ready, otherwise within the same week and link it from the HN thread.
+7. **Product Hunt**: `product-hunt.md`, at 00:01 PT (08:01 UTC on Pacific standard time) on
+   the Show HN day or the day after, never before it. The maker comment goes up with the
+   listing. Do not ask anyone to upvote.
+8. **LinkedIn**: `linkedin.md`, the Show HN day, once the HN post is up; link the HN thread
+   in a comment, not in the post.
+9. **dev.to**: `devto.md` (front matter and intro) over the body of `blog-the-wall.md`, a day
+   or two after the Show HN and only after the blog post is live at `https://daypass-lac.vercel.app/blog/the-wall/`,
+   which is its `canonical_url`.
 
 ## Tone
 

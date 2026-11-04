@@ -35,7 +35,7 @@ Sleep 300ms
 Enter
 Sleep 3s
 
-Type "daypass log -n 3"
+Type "daypass log -n 4"
 Sleep 300ms
 Enter
 Sleep 2.5s

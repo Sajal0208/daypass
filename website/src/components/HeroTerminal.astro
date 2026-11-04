@@ -1,0 +1,91 @@
+---
+/**
+ * The static "three commands" card next to the hero copy. The command lines follow README.md
+ * ("Install", "Daily use"); the tool-call lines are the ones in demo-output.txt (the recorded
+ * demo), shortened to fit one line each. Nothing here is a number the docs do not state.
+ */
+import { installCommand } from '../lib/meta.ts';
+---
+
+<figure class="term" aria-label="Three commands: install, open a lease, let the agent query">
+	<div class="bar" aria-hidden="true">
+		<span class="dot"></span><span class="dot"></span><span class="dot"></span>
+		<span class="bar-title">terminal</span>
+	</div>
+	<pre class="body"><code><span class="line"><span class="prompt">$</span> <span class="cmd">{installCommand}</span></span>
+<span class="line"><span class="prompt">$</span> <span class="cmd">daypass open prod --ttl 45m --reason "debug order 1234"</span></span>
+<span class="line out">Lease 2ceae5b9 open on "prod" until 14:46 (45m).</span>
+<span class="line out">Your AI session can now use the daypass MCP tools.</span>
+
+<span class="line note"># in Claude Code, the agent asks:</span>
+<span class="line"><span class="ok">✔</span> query select id, name from customers
+  <span class="arrow">→</span> 4 rows, 17 ms</span>
+<span class="line"><span class="err">✖</span> query select * from customers
+  <span class="arrow">→</span> permission denied for table customers</span>
+<span class="line"><span class="err">✖</span> query update customers set name = 'x'
+  <span class="arrow">→</span> Blocked: Only SELECT is allowed (got Update)</span></code></pre>
+</figure>
+
+<style>
+	.term {
+		margin: 0;
+		border: 1px solid var(--sl-color-hairline-light);
+		border-radius: 0.75rem;
+		background: var(--sl-color-bg-nav);
+		overflow: hidden;
+		box-shadow: 0 1px 0 var(--sl-color-hairline-light);
+	}
+	.bar {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.6rem 0.9rem;
+		border-bottom: 1px solid var(--sl-color-hairline-light);
+	}
+	.dot {
+		width: 0.6rem;
+		height: 0.6rem;
+		border-radius: 50%;
+		background: var(--sl-color-gray-5);
+	}
+	.bar-title {
+		margin-left: 0.4rem;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--sl-color-text);
+	}
+	.body {
+		margin: 0;
+		padding: 0.9rem 1rem 1rem;
+		font-size: 0.8rem;
+		line-height: 1.7;
+		color: var(--sl-color-text);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	.prompt {
+		color: var(--sl-color-text-accent);
+	}
+	.cmd {
+		color: var(--sl-color-white);
+		font-weight: 600;
+	}
+	.out,
+	.note {
+		color: var(--sl-color-text);
+	}
+	.arrow {
+		color: var(--sl-color-text-accent);
+	}
+	.ok {
+		color: var(--sl-color-text-accent);
+	}
+	.err {
+		color: var(--sl-color-white);
+	}
+	@media (min-width: 50em) {
+		.body {
+			font-size: 0.8125rem;
+		}
+	}
+</style>

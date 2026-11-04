@@ -1,0 +1,22 @@
+<!doctype html><meta charset=utf-8><link rel=stylesheet href=base.css><style>
+table{margin-top:28px;border-collapse:collapse;width:100%;font-size:19px;line-height:1.4}
+td{padding:13px 16px;border-top:1px solid #22302f;vertical-align:top}
+td:first-child{width:230px;font-weight:700;color:#2dd4bf;white-space:nowrap}
+tr.wall td{background:#0f2a27}tr.wall td:first-child{color:#fff}
+.tag{display:inline-block;font-size:13px;font-weight:700;letter-spacing:.06em;padding:2px 8px;border-radius:4px;margin-left:8px;vertical-align:2px}
+.w{background:#2dd4bf;color:#062a26}.f{border:1px solid #3b4b4d;color:#8a979c}
+code{font-size:17px;color:#b9f5ea}
+</style><body>
+<h1>Why it is safe</h1><div class=cap>The role's grants are the wall; the rest are fences.</div>
+<table>
+<tr class=wall><td>DB role<span class="tag w">WALL</span></td><td><code>SELECT</code> on visible columns only, granted table by table, no write privilege anywhere. PII columns are hidden by Postgres, so <code>SELECT *</code> on those tables fails. Views that would expose a hidden column are not granted.</td></tr>
+<tr><td>No stored password<span class="tag f">FENCE</span></td><td>On AWS RDS the role logs in with a 15-minute IAM token minted from your own AWS identity.</td></tr>
+<tr><td>Real parser<span class="tag f">FENCE</span></td><td>Postgres's own parser (<code>libpg-query</code>). One <code>SELECT</code> or <code>EXPLAIN</code>, at most 256 KiB. No data-modifying CTE, <code>FOR UPDATE</code>, <code>pg_sleep</code>, <code>dblink</code>, <code>set_config</code>, …</td></tr>
+<tr><td>Read-only txn<span class="tag f">FENCE</span></td><td>Each call in <code>BEGIN READ ONLY</code>, 10 s timeout or the lease time left, then <code>DISCARD ALL</code>.</td></tr>
+<tr><td>Result caps<span class="tag f">FENCE</span></td><td>500 rows, 2000 characters per cell, 1 MB per result, cut in the database before rows are sent.</td></tr>
+<tr><td>Audit<span class="tag f">FENCE</span></td><td>Two JSON lines per call in <code>~/.daypass/audit.jsonl</code>: one before the query runs, one when it ends.</td></tr>
+<tr><td>Network<span class="tag f">FENCE</span></td><td>Optional: your current IP in the DB security group for the lease only, removed on close or expiry.</td></tr>
+<tr><td>TLS<span class="tag f">FENCE</span></td><td>Always verified. RDS targets pin the bundled AWS RDS CA.</td></tr>
+</table>
+<div class=foot>daypass · MIT · github.com/Sajal0208/daypass · full table and limits in README.md and docs/threat-model.md</div>
+</body>

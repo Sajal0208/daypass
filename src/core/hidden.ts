@@ -35,6 +35,11 @@ export interface RelDep {
   wholeRow?: boolean;
   /** pg_class.relkind of the referenced relation ('f' = foreign table, never granted). */
   refKind?: string;
+  /**
+   * refKind 'S' only: the column that owns the sequence (serial / identity), as a hidden-list
+   * entry. The setup withholds a sequence owned by a hidden column, and every view reading it.
+   */
+  seqOwner?: string;
 }
 
 /**
@@ -78,12 +83,26 @@ export interface RelParent {
   parentTable: string;
 }
 
+/**
+ * A materialized view whose stored rows are what its OWNER could read at refresh (a row of
+ * MATVIEW_TAINT_SQL in core/matview.ts, rule (e) of sql/setup-role.sql). `why` names the first
+ * reason found in its view tree.
+ */
+export interface MatviewTaint {
+  schema: string;
+  view: string;
+  why: string;
+  /** 'm' (default): a materialized view. 'v': a plain view that reads a row-level-security table with its owner's rights. */
+  kind?: string;
+}
+
 /** What a live catalog adds to the column list; a Prisma schema has neither. */
 export interface CatalogShape {
   inherits?: RelParent[];
   deps?: RelDep[];
   generated?: GeneratedDep[];
   refs?: RuleRef[];
+  matviews?: MatviewTaint[];
   /** The schemas the role may read (--schemas). A view over a relation outside them is withheld. */
   schemas?: string[];
 }
@@ -96,8 +115,8 @@ export interface CatalogShape {
  */
 export const HIDDEN_RELKINDS = ['r', 'p', 'v', 'm', 'f'] as const;
 
-// The name heuristic below (WORDS, SPECIAL, ALWAYS, SAFE_KEY, SAFE_TAIL, STRONG, toSnake,
-// looksSensitive) is mirrored verbatim in plugin/hooks/pii-guard.mjs, which runs dependency-free
+// The name heuristic below (WORDS, SPECIAL, ALWAYS, SAFE_KEY, SAFE_TAIL, STRONG, GLUE, toSnake,
+// singular, splitGlued, looksSensitive) is mirrored verbatim in plugin/hooks/pii-guard.mjs, which runs dependency-free
 // and cannot import this module. Change both files together: the parity test in
 // test/plugin-hook.test.ts guards drift.
 
@@ -109,9 +128,9 @@ const WORDS = new Set([
   'religion', 'notes', 'body', 'payload', 'metadata', 'recording', 'lat', 'lng', 'latitude', 'longitude',
   'postal', 'zip', 'zipcode', 'caller', 'encrypted',
 ]);
-/** Prefix/exact-name cases; `lines` and `prompt_snapshot` are free-text transcript/log columns from the first deployment. */
+/** Prefix/exact-name cases. */
 const SPECIAL =
-  /^encrypted_|^health_|^prompt_snapshot$|^(lines|credentials)$|^(first|last|full|middle|given|family|user)_name$|^e_mail$|^user_agent$/;
+  /^encrypted_|^health_|^credentials$|^(first|last|full|middle|given|family|user)_name$|^e_mail$|^user_agent$/;
 /** Identifiers that are themselves PII, even though they end in a normally-safe tail. */
 const ALWAYS = /^(national|tax|government)_(id|number)$|^(bank_)?account_number$|^national_insurance(_number)?$|^device_id$|^stripe_customer_id$/;
 /** `key` names that are not credentials: public keys, storage and cache keys, partition keys. */
@@ -121,6 +140,22 @@ const SAFE_TAIL =
   /_(verified|confirmed|count|used|at|id|type|status|enabled|required|country|country_code|brand|layout|limit|prefix|version|expiry|expires|expiration|rounds|domain|last_\d+)$/;
 /** Words that beat an `_id` / `_type` tail: email_id, secret_key_id and api_key_hash_type are still sensitive. */
 const STRONG = new Set(['email', 'secret', 'key', 'token', 'password']);
+/**
+ * Words a run-together part is split into (`emailaddress` -> email_address, `dateofbirth` ->
+ * date_of_birth, `apikeyid` -> api_key_id): WORDS, the safe tails, and the words that pair with
+ * them in common names. A part is split only when it is made entirely of these, so `keyboard`,
+ * `panel` and `pinned` stay whole.
+ */
+const GLUE = new Set([
+  ...WORDS,
+  'api', 'access', 'refresh', 'auth', 'session', 'private', 'client', 'first', 'last', 'full', 'middle', 'given',
+  'family', 'user', 'agent', 'date', 'of', 'number', 'num', 'no', 'hash', 'digest', 'name', 'street', 'home',
+  'billing', 'shipping', 'national', 'tax', 'government', 'account', 'bank', 'credit', 'device', 'code',
+  'verified', 'confirmed', 'count', 'used', 'at', 'id', 'type', 'status', 'enabled', 'required', 'country',
+  'brand', 'layout', 'limit', 'prefix', 'version', 'expiry', 'expires', 'expiration', 'rounds', 'domain',
+]);
+/** Longest GLUE word plus a plural `es`: bounds the split to linear time. */
+const GLUE_MAX = Math.max(...[...GLUE].map((w) => w.length)) + 2;
 
 /**
  * snake_case for snake_case, camelCase and quoted names: phoneNumber -> phone_number,
@@ -135,11 +170,39 @@ function toSnake(name: string): string {
     .toLowerCase();
 }
 
+/** The singular of a plural sensitive word (`secrets` -> secret, `addresses` -> address); anything else as it is. */
+function singular(w: string): string {
+  if (WORDS.has(w)) return w;
+  if (w.endsWith('es') && WORDS.has(w.slice(0, -2))) return w.slice(0, -2);
+  if (w.endsWith('s') && WORDS.has(w.slice(0, -1))) return w.slice(0, -1);
+  return w;
+}
+
+/** A run-together part as two or more GLUE words (longest first), or null when it is not one. */
+function splitGlued(p: string): string[] | null {
+  if (p.length < 4 || p.length > 64) return null;
+  const best: (string[] | null)[] = new Array(p.length + 1).fill(null);
+  best[p.length] = [];
+  for (let i = p.length - 1; i >= 0; i--) {
+    for (let j = Math.min(p.length, i + GLUE_MAX); j > i; j--) {
+      const rest = best[j];
+      const w = singular(p.slice(i, j));
+      if (rest !== null && GLUE.has(w)) {
+        best[i] = [w, ...rest];
+        break;
+      }
+    }
+  }
+  return best[0] !== null && best[0].length >= 2 ? best[0] : null;
+}
+
 export function looksSensitive(column: string): boolean {
-  const name = toSnake(column);
+  const parts = toSnake(column)
+    .split('_')
+    .flatMap((p) => (WORDS.has(singular(p)) ? [singular(p)] : splitGlued(p) ?? [p]));
+  const name = parts.join('_');
   if (ALWAYS.test(name)) return true;
   if (SAFE_KEY.test(name)) return false;
-  const parts = name.split('_');
   if (SAFE_TAIL.test(name) && !(/_(id|type)$/.test(name) && parts.some((p) => STRONG.has(p)))) return false;
   if (SPECIAL.test(name)) return true;
   return parts.some((part) => WORDS.has(part));
@@ -307,7 +370,7 @@ export function suggestHidden(cols: ColumnInfo[], shape: CatalogShape = {}): str
   const parents = parentMap(shape.inherits ?? []);
   const coveredByAncestor = (e: HiddenEntry): boolean =>
     ancestors(parents, e.schema, e.table).some((p) => flagged.has(formatHiddenEntry({ ...p, column: e.column })));
-  const tainted = new Set(viewLeaks([...flagged], shape.deps ?? [], { schemas: shape.schemas, refs: shape.refs }).map((l) => l.view));
+  const tainted = new Set(viewLeaks([...flagged], shape.deps ?? [], { schemas: shape.schemas, refs: shape.refs, matviews: shape.matviews }).map((l) => l.view));
   return [...flagged]
     .filter((k) => {
       const e = parseHiddenEntry(k);
@@ -401,7 +464,7 @@ export function diffHidden(
   const listed = new Set([...h, ...a]);
   const expanded = new Set(expandHidden(hidden, shape.inherits));
   const covered = new Set([...expanded, ...a]);
-  const tainted = new Set(viewLeaks(hidden, shape.deps ?? [], { schemas: shape.schemas, refs: shape.refs }).map((l) => l.view));
+  const tainted = new Set(viewLeaks(hidden, shape.deps ?? [], { schemas: shape.schemas, refs: shape.refs, matviews: shape.matviews }).map((l) => l.view));
   const parents = parentMap(shape.inherits ?? []);
   // Generated columns computed from a hidden column: the setup refuses the list until they are hidden too.
   const derived: { entry: string; from: string }[] = [];
@@ -438,13 +501,18 @@ export function diffHidden(
  * Mirrors the taint query in sql/setup-role.sql; `via` names the tainted view an indirect leak
  * goes through.
  */
-/** Why a view is withheld when it is not a hidden column: see viewLeaks. */
-export type LeakKind = 'foreign' | 'schema' | 'function' | 'catalog';
+/**
+ * Why a view is withheld when it is not a hidden column: see viewLeaks. 'matview': a materialized
+ * view stored what its owner could read (`column` is the reason, from MATVIEW_TAINT_SQL). 'rls': a
+ * plain view reads a row-level-security table with its owner's rights (same source). 'sequence': it
+ * reads a sequence owned by a hidden column (`column` is the sequence).
+ */
+export type LeakKind = 'foreign' | 'schema' | 'function' | 'catalog' | 'matview' | 'rls' | 'sequence';
 
 export function viewLeaks(
   hidden: string[],
   deps: RelDep[],
-  opts: { schemas?: string[]; refs?: RuleRef[] } = {},
+  opts: { schemas?: string[]; refs?: RuleRef[]; matviews?: MatviewTaint[] } = {},
 ): { view: string; column: string; via: string | null; kind?: LeakKind }[] {
   const hiddenSet = new Set(canonicalEntries(hidden));
   // relName -> first hidden column on it, for whole-row references.
@@ -473,6 +541,9 @@ export function viewLeaks(
     const ref = relName(d.refSchema, d.refTable);
     if (tainted.has(v)) continue;
     if (d.refKind === 'f') tainted.set(v, { column: ref, via: null, kind: 'foreign' });
+    else if (d.refKind === 'S' && d.seqOwner && hiddenSet.has(canonicalEntries([d.seqOwner])[0])) {
+      tainted.set(v, { column: ref, via: null, kind: 'sequence' });
+    }
     else if (opts.schemas && !system(d.refSchema) && !opts.schemas.includes(d.refSchema)) tainted.set(v, { column: ref, via: null, kind: 'schema' });
   }
   // A matview calling a non-catalog or data-reading function; a view over a catalog PUBLIC cannot read.
@@ -484,6 +555,12 @@ export function viewLeaks(
     } else if (r.refType === 'relation' && system(r.refSchema) && r.publicReadable === false) {
       tainted.set(v, { column: `${r.refSchema}.${r.refName}`, via: null, kind: 'catalog' });
     }
+  }
+  // A matview whose whole tree (views it reads, recursively) reached a caller-filtered catalog, a
+  // table with row-level security or a function that ran as the owner: the catalog query decides.
+  for (const m of opts.matviews ?? []) {
+    const v = relName(m.schema, m.view);
+    if (!tainted.has(v)) tainted.set(v, { column: m.why, via: null, kind: m.kind === 'v' ? 'rls' : 'matview' });
   }
   for (let changed = true; changed; ) {
     changed = false;

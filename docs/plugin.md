@@ -1,9 +1,11 @@
 # Claude Code plugin
 
-The Daypass plugin is the Claude Code packaging of Daypass. It bundles the MCP server
-(`daypass mcp`), so there is no `claude mcp add` step, and on top of the five tools it adds
+The Daypass plugin is the Claude Code packaging of Daypass. It registers the MCP server
+(`daypass mcp`, run from the `daypass` on your `PATH`; the plugin does not ship the CLI), so
+there is no `claude mcp add` step, and on top of the five tools it adds
 two skills, three commands, a hook that stops a query from reaching the database when it
-names a column that looks like personal data, and an eval suite that checks the skill does
+names a column that looks like personal data, a hook that keeps Claude out of Daypass's own
+state files, and an eval suite that checks the skill does
 what this page says. The plugin lives in [`plugin/`](../plugin/) in the repo; the catalog
 Claude Code installs it from is [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json).
 
@@ -21,7 +23,7 @@ Claude behaves inside that wall.
   daypass init            # then edit ~/.daypass/config.json and run the role setup
   ```
 
-- Claude Code 2.1.295 or later for the hook to fail closed (`onFailure: block` in
+- Claude Code 2.1.295 or later for the hooks to fail closed (`onFailure: block` in
   `hooks.json`; older versions ignore the field and let a crashed or timed-out hook through)
   and 2.1.269 or later for the plugin eval runner. Skills and commands work on any version
   that supports plugins.
@@ -53,7 +55,7 @@ If you registered the server by hand earlier (`claude mcp add daypass`), remove 
 claude mcp remove daypass
 ```
 
-The plugin bundles the server, and keeping both gives Claude two copies of every tool.
+The plugin registers the server itself, and keeping both gives Claude two copies of every tool.
 
 ## What it adds
 
@@ -80,8 +82,11 @@ A first-time walkthrough, one question per turn: which kind of database (URL or 
 IAM), `daypass init` and the target entry, drafting and reviewing the hidden-columns list
 (`daypass hidden suggest`), the role setup SQL the admin runs as owner, the RDS IAM policy,
 `daypass doctor`, and a short verification lease for which Claude prints the `daypass open`
-line and the admin runs it. Claude runs the local, harmless parts; the admin runs everything
-that touches production or AWS (including every lease), and no secret enters the chat. Source: [`plugin/skills/daypass-setup/SKILL.md`](../plugin/skills/daypass-setup/SKILL.md).
+line and the admin runs it. Claude runs the local, harmless parts (a `hidden suggest` from a
+Prisma schema, `doctor`); the admin runs everything that touches production or AWS (including
+every lease), saves the reviewed hidden-columns list and sets the role's password with
+`\password daypass_ro`. Claude never reads `config.json` or `lease.json`, never writes the
+hidden list, and no secret enters the chat. Source: [`plugin/skills/daypass-setup/SKILL.md`](../plugin/skills/daypass-setup/SKILL.md).
 
 ### `/daypass:daypass-status`
 
@@ -96,12 +101,14 @@ Runs `daypass log -n N` (default 20) and summarises the audit entries: queries p
 blocked calls with the guard's reason, errors, the slowest query and total rows. SQL whose
 literals look like PII (a phone number, an email, a token) is described, not quoted: the
 audit file stores SQL as sent, and the command keeps those literals out of the transcript.
+The same goes for database errors, which can carry the values they failed on. It reads the
+log only through `daypass log`, and a non-numeric `N` falls back to 20.
 
 ### `/daypass:daypass-hidden-check <target>`
 
 Runs `daypass hidden check --file … --live <target>` (no lease needed, though on RDS with
 the per-lease IP rule the port is closed without one and `--live` times out at TCP) and
-explains the two drift lists: columns in the list that the schema no longer has, and new columns that
+explains the drift lists: columns in the list that the schema no longer has, and new columns that
 look sensitive but are not hidden. For each it proposes the exact line to change or append
 (`table.column` to hide, `!table.column  # why` to allow after review), then shows the
 re-apply command the owner runs:
@@ -110,16 +117,20 @@ re-apply command the owner runs:
 daypass sql --hide-file "${DAYPASS_HIDDEN_FILE:-$HOME/.daypass/hidden-columns.txt}" | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1
 ```
 
-It never edits the list or runs `daypass sql` or `psql`: both change what the role can read.
+It never edits the list (least of all with a `!` allow line, which tells the PII guard to pass a
+column) or runs `daypass sql` or `psql`: both change what the role can read. You make the edits
+it proposes.
 
 ## The PII guard hook
 
 A `PreToolUse` hook on the `query` and `explain` tools (matcher
 `^mcp__(plugin_daypass_)?daypass__(query|explain)$`, so it also covers a hand-registered
 server). Before the SQL leaves Claude Code the hook tokenizes it the way Postgres does:
-`'...'` with `''`, `E'...'` with backslash escapes, `$$...$$` and `$tag$...$tag$`,
-`"..."` identifiers, `U&"..."` identifiers with `\XXXX` escapes and `UESCAPE` (also after a
-comment, as Postgres 13+ allows), `--` and nested `/* */` comments. Nothing inside a literal
+`'...'` with `''` (and strings continued across a newline), `E'...'` with backslash escapes,
+`$$...$$` and `$tag$...$tag$`, `"..."` identifiers, `U&"..."` identifiers with `\XXXX`
+escapes and `UESCAPE` (also after a comment, as Postgres 13+ allows, with the escape character
+given in any string form), `--` comments (ended by `\n` or `\r`, as Postgres does) and nested
+`/* */` comments. Nothing inside a literal
 or a comment is looked at. Identifiers are resolved the way Postgres resolves them:
 unquoted names are folded by lower-casing A-Z only (so `pHONE` is `phone`, and a non-ASCII
 letter such as U+212A KELVIN SIGN stays itself), and every name is truncated to 63 bytes
@@ -139,7 +150,8 @@ letter such as U+212A KELVIN SIGN stays itself), and every name is truncated to 
    `schema_to_xml_and_xmlschema`, `database_to_xml`, `database_to_xmlschema`,
    `database_to_xml_and_xmlschema`, `ts_stat` and `ts_rewrite` (both run a query given as
    text), and, in case the extensions are installed, `dblink*`, `crosstab*`, `connectby` and
-   `xpath_table`. Reason:
+   `xpath_table`, whether called as `f(x)` or in attribute notation (`('select …').ts_stat`).
+   Reason:
    `Daypass PII guard: query_to_xml() executes SQL from a string / returns whole rows, which the guard cannot inspect. Use a plain SELECT that names its columns instead.`
    Planner statistics (`pg_stats`, `pg_statistic`, `pg_stats_ext`, `pg_stats_ext_exprs`,
    `pg_statistic_ext_data`) are blocked too: `most_common_vals` and `histogram_bounds` hold
@@ -160,12 +172,13 @@ letter such as U+212A KELVIN SIGN stays itself), and every name is truncated to 
 3. **Whole-row references are blocked.** A table or alias from any `FROM` item (comma lists,
    `JOIN`s, parenthesised joins and the join's own alias) used as a value: `to_jsonb(u)`,
    `row_to_json(u)`, `jsonb_agg(u)`, `(u).phone`, `u::text`, `select u from users u`,
-   `select distinct on (u.id) u`, `lateral (select u)`, and attribute notation, which
+   `select distinct on (u.id) u`, `lateral (select u)`, a row after `VALUE`, `KEY`, `PASSING`,
+   `REF` or `BETWEEN` (`json_object('k' VALUE u)`), and attribute notation, which
    Postgres reads as a function call on the row: `u.to_jsonb`, `u.row_to_json`,
-   `u.json_agg`, `u.concat`, `u.record_out`, `u.record_send`, `u.hash_record`, ... The list
-   was generated on PG 14 from `pg_proc` (functions callable with one argument of type
-   `record`, `anyelement`, `"any"`, `anynonarray` or `anycompatible*`, or `VARIADIC "any"`)
-   and keeps the ones that resolve as `u.<name>` and return or encode the row's values; it
+   `u.json_agg`, `u.any_value`, `u.jsonb_agg_strict`, `u.concat`, `u.record_out`,
+   `u.record_send`, `u.hash_record`, ... The list was regenerated on PG 16 and 17 (a superset
+   of 14 and 15) by trying `u.<name>` for every function whose first argument is a
+   pseudo-type or composite type, and keeps the ones whose result carries the row's values; it
    leaves out names that return no values and are common column names (`count`, `rank`,
    `mode`, `lead`, `lag`, `num_nulls`, `pg_typeof`, `pg_column_size`, ...). Every alias form
    Postgres accepts is recognised, including unreserved words (`from leads as by`). CTEs,
@@ -184,8 +197,10 @@ letter such as U+212A KELVIN SIGN stays itself), and every name is truncated to 
 4. **Every identifier is checked by name**, quoted or not, camelCase or snake_case, against
    the heuristic `daypass hidden suggest` uses (`phone`, `email`, `token`, `secret`,
    `password`, `ssn`, `card`, `ip`, `username`, `first_name`, `notes`, `payload`,
-   `encrypted_*`, `national_id`, `account_number`, …; `email_verified`, `phone_id`,
-   `user_id`, `public_key` and other safe tails and keys are not flagged). Names that
+   `encrypted_*`, `national_id`, `account_number`, …, plurals such as `secrets` and
+   run-together names such as `emailaddress`; `email_verified`, `phone_id`, `address_id`,
+   `user_id`, `public_key` and other safe tails and keys are not flagged). In a qualified
+   name only the last part is a column: the `phone_book` in `phone_book.id` is a table. Names that
    label rather than read are skipped: table and CTE names in `FROM` / `WITH`
    (`from "PhoneCall"`, `from email_events`), the name right after `AS`
    (`count(*) as emails_sent`, the type in `cast(x as t)`), and an implicit alias right
@@ -249,6 +264,45 @@ column's default expression, are outside what it checks. It is a second fence in
 role, which cannot read a hidden column whatever the hook decides. A list that covers a
 column by name is also no proof that the grant was applied; `daypass doctor` and the
 verification probe in the setup skill check that.
+
+## The state guard hook
+
+A second `PreToolUse` hook, on `Bash`, `Monitor` (which runs a command in the same shell as
+`Bash` and is checked the same way), `Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`,
+`Grep` and `Glob` ([`plugin/hooks/state-guard.mjs`](../plugin/hooks/state-guard.mjs)).
+`~/.daypass` (or `$DAYPASS_HOME`) holds `config.json` (target URLs, which can carry
+passwords), `lease.json` (the lease the MCP server trusts), `audit.jsonl` and
+`hidden-columns.txt` (whose `!table.column` lines let the PII guard pass a column). Only you
+should change these. The hook blocks:
+
+- Bash that runs `daypass mcp` (a second MCP server, outside the PII guard) or `daypass open`
+  (a lease is your decision and is recorded under your name), also behind wrappers (`sudo`,
+  `doas`, `env`, `exec`, `time`, `nohup`, `command`, `nice`, `ionice`, `timeout`, `stdbuf`,
+  `xargs`, `watch`, `sh`/`bash`/`zsh`/`dash`/`ksh`/`fish -c`, `npx`/`bunx`/`pnpx`,
+  `npm`/`pnpm`/`yarn`/`bun exec|x|dlx`) and as `$(which daypass)`; a `daypass` whose
+  subcommand cannot be read from the text (`xargs daypass`, `daypass $SUB`) is blocked too.
+  `daypass status`, `log`, `doctor`, `close`, `hidden` and `sql` stay allowed;
+- Bash that names the state directory (`~/.daypass`, `.daypass`, `$DAYPASS_HOME`), in any
+  case, through quotes or backslashes, by brace expansion (`~/.{daypass,x}`) or by a glob that
+  can match it (`.day*`), except the Daypass CLI reading the hidden list (`daypass hidden
+  check --file ~/.daypass/hidden-columns.txt`) with no output redirect;
+- `Write`, `Edit`, `MultiEdit` and `NotebookEdit` of any path in the state directory or of
+  `$DAYPASS_HIDDEN_FILE` (symlinks resolved);
+- `Read` of `config.json` or `lease.json` there, and `Grep` / `Glob` whose path, `glob` or
+  `pattern` can reach the directory. Paths are compared case-insensitively.
+
+Reasons start with `Daypass state guard:` and end by saying the hook is a fence, not a wall,
+and that you run the command in your own terminal if you meant it. That is what to do: when
+Claude needs a lease or a hidden-list change, it prints the line and you run or add it.
+
+It fails closed like the PII guard (stdin that is not a tool call, or a Bash call without a
+string command, exits 2; `onFailure: block`), and it has no off switch. A tool the matcher does
+not name runs no hook at all, so a new Claude Code tool that runs commands or reads files has to
+be added to `hooks.json` before the fence covers it. It matches command
+text, so it stops mistakes and prompt-injected instructions, not a determined shell command:
+a variable that assembles the name (`D=.day; cat ~/${D}pass/config.json`), a script, or a hard
+link made elsewhere gets past it, and a `Grep` that skips hidden files is not inspected. The boundaries are the database role and the lease you
+open; see "The agent and your files" in the [threat model](threat-model.md).
 
 ## Evals
 

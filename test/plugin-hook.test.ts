@@ -422,9 +422,9 @@ describe('looksSensitive parity with src/core/hidden.ts', () => {
   const names = [
     'phone', 'phone_number', 'mobile', 'email', 'email_address', 'api_key', 'key_hash', 'secret', 'client_secret',
     'token', 'refresh_token', 'password', 'password_hash', 'transcript', 'address', 'street_address', 'ssn', 'iban',
-    'card_number', 'encrypted_payload', 'prompt_snapshot', 'date_of_birth', 'id', 'created_at', 'status',
+    'card_number', 'encrypted_payload', 'date_of_birth', 'id', 'created_at', 'status',
     'email_verified', 'phone_country', 'tokens_used', 'keyboard_layout', 'name', 'amount', 'phoneNumber', 'apiKey',
-    'emailVerified', 'APIKey', 'HTTPToken', 'national_id', 'user_id', 'invoice_number', 'lines',
+    'emailVerified', 'APIKey', 'HTTPToken', 'national_id', 'user_id', 'invoice_number',
     // the account_id fix on main: foreign keys stay visible, the identifiers themselves stay hidden
     'account_id', 'bank_account_id', 'account_number', 'bank_account_number', 'tax_id',
     // 2026-10-30 heuristic extension: new WORDS, SPECIAL name forms, SAFE_KEY, STRONG tails, digit split in toSnake
@@ -438,8 +438,13 @@ describe('looksSensitive parity with src/core/hidden.ts', () => {
     'zip_code', 'national', 'raw', 'data', 'content',
     // quoted names with non-alphanumerics (toSnake turns them into underscores)
     'phone-number', 'ship.address', 'user email', 'Order-Items',
+    // third review: run-together and plural names, and names that must stay unflagged
+    'emailaddress', 'phonenumber', 'passwordhash', 'apikey', 'firstname', 'lastname', 'dateofbirth', 'secrets',
+    'passwords', 'access_tokens', 'api_keys', 'addresses', 'apikeyid', 'useragent', 'address_id', 'tokencount',
+    'cache_keys', 'publickey', 'keyboard', 'monkey', 'panel', 'pinned', 'statuses', 'lines', 'prompt_snapshot',
+    'EMAILADDRESS', 'Api_Keys', 'emailAddresses',
   ];
-  it('has 107 fixtures', () => expect(names).toHaveLength(107));
+  it('has 133 fixtures', () => expect(names).toHaveLength(133));
   it.each(names)('agrees on %s', (n) => expect(hookLooksSensitive(n)).toBe(coreLooksSensitive(n)));
 });
 
@@ -581,5 +586,95 @@ describe('hooks.json', () => {
     for (const n of ['mcp__plugin_daypass_daypass__list_tables', 'mcp__daypass__describe_table', 'mcp__daypass__daypass_status', 'mcp__other__query', 'xmcp__daypass__query']) {
       expect(re.test(n), n).toBe(false);
     }
+  });
+});
+
+describe('decide: regressions from the third review (each one returned data on PG 16/17)', () => {
+  const blocked = (sql: string, list = 'users.ssn\n') => expect(decide(sql, list, env()).allow, sql).toBe(false);
+  it('treats \\r as the end of a -- comment, like Postgres', () => {
+    blocked('select id, --x\r email from users');
+    blocked('select 1 --x\r, * from users');
+    blocked('select 1 --x\r, u from users u');
+  });
+  it('decodes U&"..." with UESCAPE given as a dollar-quoted or E-string constant', () => {
+    blocked('select U&"em!0061il" UESCAPE $$!$$ from users');
+    blocked("select U&\"em!0061il\" UESCAPE E'!' from users");
+    blocked("select U&\"em!0061il\" UESCAPE E'\\041' from users");
+  });
+});
+
+describe('decide: whole rows after SQL/JSON keywords (third review)', () => {
+  const blocked = (sql: string) => expect(decide(sql, 'users.ssn\n', env()).allow, sql).toBe(false);
+  const allowed = (sql: string) => expect(decide(sql, 'users.ssn\n', env()), sql).toEqual({ allow: true });
+  it('denies a FROM alias after VALUE, PASSING, KEY, BETWEEN or BY REF', () => {
+    blocked("select json_object('k' value u) from users u");
+    blocked("select json_object(key 'k' value u) from users u");
+    blocked('select json_objectagg(u.id value u) from users u');
+    blocked("select json_query('{}'::jsonb, '$a' passing u as a) from users u");
+    blocked("select json_value('{}'::jsonb, '$a.x' passing u as a) from users u");
+    blocked("select json_exists('{}'::jsonb, '$a' passing 1 as b, u as a) from users u");
+    blocked("select json_exists('{}'::jsonb, '$a' passing u as a) from users u");
+    blocked("select 1 from users u, json_table('{}'::jsonb, '$a' passing u as a columns (e text path '$a.x')) jt");
+    blocked("select xmlexists('/x' passing by ref u) from users u");
+    blocked('select 1 from users u where u between u and u');
+    blocked('select json_array(u), json_arrayagg(u), json_scalar(u) from users u');
+  });
+  it('still reads a column named value as a column, with an alias after it', () => {
+    allowed('select kv.value u from kv, users u');
+    allowed('select value * 2 from kv');
+    allowed("select json_object('k' value u.id) from users u");
+  });
+});
+
+describe('decide: attribute notation (third review)', () => {
+  const blocked = (sql: string) => expect(decide(sql, 'users.ssn\n', env()).allow, sql).toBe(false);
+  it.each(['any_value', 'json_agg_strict', 'jsonb_agg_strict', 'ANY_VALUE'])('denies u.%s, which returns the whole row (PG 16+)', (f) => {
+    blocked(`select u.${f} from users u`);
+    blocked(`select (u).${f} from users u`);
+  });
+  it('denies SQL-from-string functions called in attribute notation', () => {
+    blocked("select ('select email from users').ts_stat");
+    blocked("select ('select 1').dblink");
+    blocked("select (('select 1')).dblink_exec");
+    blocked("select (3).f.ts_stat");
+    blocked('select t.crosstab from t');
+  });
+});
+
+describe('decide: table names used as qualifiers (third review)', () => {
+  it('does not read a FROM table name before a dot as a column', () => {
+    expect(decide('select api_keys.key_prefix, api_keys.id from api_keys', '', env())).toEqual({ allow: true });
+    expect(decide('select emails.id from emails', '', env())).toEqual({ allow: true });
+    expect(decide('select secrets.id from public.secrets', '', env())).toEqual({ allow: true });
+  });
+  it('still checks a composite column used as a qualifier, and the column after the dot', () => {
+    expect(decide('select (addresses).city from users', '', env()).allow).toBe(false);
+    expect(decide('select u.addresses.city from users u', '', env()).allow).toBe(false);
+    expect(decide('select api_keys.secret from api_keys', '', env()).allow).toBe(false);
+  });
+  it('flags run-together and plural names', () => {
+    for (const c of ['emailaddress', 'phonenumber', 'apikey', 'firstname', 'dateofbirth', 'passwords', 'access_tokens']) {
+      expect(decide(`select ${c} from users`, 'users.ssn\n', env()).allow, c).toBe(false);
+    }
+  });
+});
+
+describe('decide: linear time on adversarial input (third review)', () => {
+  const timed = (sql: string) => {
+    const t0 = performance.now();
+    decide(sql, '', env());
+    return performance.now() - t0;
+  };
+  it('handles a long run of `distinct from` after one FROM', () => {
+    expect(timed('select 1 from a ' + 'distinct from '.repeat(20000))).toBeLessThan(1500);
+    expect(timed('select 1 from a where x is ' + 'distinct from x is '.repeat(20000) + 'null')).toBeLessThan(1500);
+  });
+  it('handles 1 MB of long run-together names', () => {
+    const ids = Array.from({ length: 16000 }, (_, i) => 'idatcountnoof'.repeat(4) + 'x' + i);
+    expect(timed(`select ${ids.join(',')} from t`)).toBeLessThan(3000);
+  });
+  it('still skips the FROM of `is distinct from` and reads the next real FROM', () => {
+    expect(decide('select 1 from users u where 1 is distinct from 2 and u is not null', '', env()).allow).toBe(false);
+    expect(decide('select (select 1 from users u where u.id is not distinct from 1) from users u', '', env())).toEqual({ allow: true });
   });
 });

@@ -30,6 +30,7 @@ Security fixes from the 2026-10-30 review. **Everyone on 0.1.0: upgrade, then re
 ### Plugin
 
 - The PII hook covers `explain` too, tokenizes quoting, dollar quoting and escapes, blocks `SELECT *`, whole-row references, SQL-from-a-string functions and planner statistics, and fails closed on Claude Code 2.1.295+.
+- The state guard also covers the `Monitor` tool, which runs a command in the same shell as `Bash`; before, a `Monitor` call could read `config.json` or run `daypass open` with no hook at all.
 
 ### Release
 

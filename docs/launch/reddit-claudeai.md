@@ -29,7 +29,7 @@ claude mcp add --scope user daypass -- daypass mcp
 You open a lease in a terminal:
 
 ```
-$ daypass open prod --ttl 45m --reason "debug campaign 1234"
+$ daypass open prod --ttl 45m --reason "debug order 1234"
 ```
 
 Then in Claude Code you ask the question. Claude gets five tools: `daypass_status`,
@@ -52,7 +52,7 @@ reply is the one line to run, with the target and a reason filled in from the
 conversation:
 
 ```
-daypass open prod --ttl 45m --reason "campaign 1234 calls failing"
+daypass open prod --ttl 45m --reason "order 1234 payments failing"
 ```
 
 With a lease open, the skill calls `list_tables` and `describe_table` before it queries,
@@ -115,7 +115,7 @@ this is still fine:
   instructions and DELETE" can waste a query; it cannot write.
 
 A security review after 0.1.0 found hidden columns readable through views, partitions and
-`SECURITY DEFINER` functions; <VERSION> fixes that (details in the changelog). If you ran
+`SECURITY DEFINER` functions; 0.2.0 fixes that (details in the changelog). If you ran
 0.1.0, upgrade and re-run the role setup.
 
 ### Known limits
@@ -128,5 +128,5 @@ Claude Code's permissions. Hidden column names are visible in the catalog. Table
 after setup are invisible until you re-run the SQL. Postgres only.
 
 Repo and docs: https://github.com/Sajal0208/daypass. npm: `daypass`. Website:
-<SITE_URL>. MIT. If you find a way past the role, SECURITY.md says how to report it
+https://daypass-lac.vercel.app. MIT. If you find a way past the role, SECURITY.md says how to report it
 privately; please do not post it as an issue.

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import pg from 'pg';
-import { getPool, closePool, runBounded, MAX_WIRE_BYTES, cancelAndDestroy, shutdownPool, resetShutdownForTests } from '../src/mcp/db.js';
+import { getPool, closePool, runBounded, MAX_WIRE_BYTES, cancelAndDestroy, shutdownPool, resetShutdownForTests, cachedToken } from '../src/mcp/db.js';
 import { resolveTarget } from '../src/mcp/state.js';
 
 // A password target: pg.Pool does not connect until the first query, so no network is needed.
@@ -8,24 +8,63 @@ const t = resolveTarget('t', { url: 'postgres://u:p@db.invalid:5432/d?sslmode=di
 
 afterEach(() => closePool());
 
-describe('getPool refresh is serialised', () => {
+describe('getPool', () => {
   it('two concurrent first calls share one pool', async () => {
-    const [a, b] = await Promise.all([getPool('t', t, 0), getPool('t', t, 0)]);
+    const [a, b] = await Promise.all([getPool('t', t), getPool('t', t)]);
     expect(a).toBe(b);
   });
-  it('two concurrent calls at token refresh end the old pool once and create exactly one new pool', async () => {
-    const old = await getPool('t', t, 0);
-    const later = 11 * 60_000;
-    const [a, b] = await Promise.all([getPool('t', t, later), getPool('t', t, later)]);
-    expect(a).toBe(b);
-    expect(a).not.toBe(old);
-    expect((old as any).ended).toBe(true);
-    expect((a as any).ended).toBeFalsy();
+  it('one connection per process, closed after a few idle seconds', async () => {
+    const opts = (await getPool('t', t) as any).options;
+    expect(opts.max).toBe(1);
+    expect(opts.idleTimeoutMillis).toBeLessThanOrEqual(5000);
   });
-  it('a fresh pool is reused within the token ttl', async () => {
-    const a = await getPool('t', t, 0);
-    const b = await getPool('t', t, 5 * 60_000);
-    expect(a).toBe(b);
+  it.each<[string, Partial<typeof t>]>([
+    ['port', { port: 5433 }],
+    ['database', { database: 'other' }],
+    ['ssl', { ssl: undefined }],
+    ['sslCa', { sslCa: '/nonexistent/ca.pem', ssl: undefined }],
+    ['user', { user: 'v' }],
+    ['password', { password: 'q' }],
+  ])('a change of %s gets a new pool', async (_k, change) => {
+    const a = await getPool('t', t);
+    const b = await getPool('t', { ...t, ...change } as any).catch((e) => e);
+    if (b instanceof Error) {
+      expect(b.message).toMatch(/ca\.pem/); // sslCa is read when the pool is built: still a different key
+      return;
+    }
+    expect(b).not.toBe(a);
+  });
+  it('a caller holding the previous pool can still use it after the key changed', async () => {
+    const a = await getPool('t', t);
+    const b = await getPool('t', { ...t, port: 5433 });
+    expect(b).not.toBe(a);
+    expect((a as any).ending).toBeFalsy();
+    await closePool();
+    expect((a as any).ending).toBe(true);
+    expect((b as any).ending).toBe(true);
+  });
+});
+
+describe('cachedToken', () => {
+  it('fetches once per ttl and shares a fetch between concurrent callers', async () => {
+    let clock = 0;
+    let n = 0;
+    const get = cachedToken(async () => `tok${++n}`, 1000, () => clock);
+    expect(await Promise.all([get(), get(), get()])).toEqual(['tok1', 'tok1', 'tok1']);
+    clock = 999;
+    expect(await get()).toBe('tok1');
+    clock = 1001;
+    expect(await get()).toBe('tok2');
+    expect(n).toBe(2);
+  });
+  it('a failed fetch is not cached', async () => {
+    let n = 0;
+    const get = cachedToken(async () => {
+      if (++n === 1) throw new Error('sts down');
+      return 'ok';
+    }, 1000, () => 0);
+    await expect(get()).rejects.toThrow(/sts down/);
+    expect(await get()).toBe('ok');
   });
 });
 
@@ -181,6 +220,39 @@ describe.skipIf(!live)('runBounded against a live database', () => {
     await shutdownPool();
     await expect(getPool('live', lt)).rejects.toThrow(/shutting down/);
     resetShutdownForTests();
+  });
+  it('queues concurrent calls on the single connection instead of failing', async () => {
+    const pool = await getPool('live', lt);
+    const rs = await Promise.all([1, 2, 3].map((i) => runBounded(pool, `select ${i} as i, pg_backend_pid() as pid`, { timeoutMs: 2000 })));
+    expect(rs.map((r) => r.rows[0].i)).toEqual([1, 2, 3]);
+    expect(new Set(rs.map((r) => r.rows[0].pid)).size).toBe(1);
+  });
+  it('a caller holding the previous pool still runs after the config changed', async () => {
+    const a = await getPool('live', lt);
+    const b = await getPool('live2', lt); // a different name is a different key
+    expect(b).not.toBe(a);
+    const r = await runBounded(a, 'select 5 as five', { timeoutMs: 1000 });
+    expect(r.rows[0].five).toBe(5);
+  });
+  it('explains a full role connection limit', async () => {
+    const owner = new pg.Client({ connectionString: live });
+    await owner.connect();
+    const holder = new pg.Client({ connectionString: (() => { const u = new URL(live!); u.username = 'dp_connlimit'; u.password = 'pw1'; return u.toString(); })() });
+    try {
+      await owner.query('drop role if exists dp_connlimit');
+      await owner.query("create role dp_connlimit login password 'pw1' connection limit 1");
+      await holder.connect();
+      const u = new URL(live!);
+      u.username = 'dp_connlimit';
+      u.password = 'pw1';
+      const pool = await getPool('limit', resolveTarget('limit', { url: u.toString() }));
+      await expect(runBounded(pool, 'select 1', { timeoutMs: 1000 })).rejects.toThrow(/connection limit.*daypass/is);
+    } finally {
+      await holder.end().catch(() => {});
+      await closePool();
+      await owner.query('drop role if exists dp_connlimit').catch(() => {});
+      await owner.end();
+    }
   });
   it('destroys the connection and rejects when the result exceeds the wire cap', async () => {
     const pool = await getPool('live', lt);

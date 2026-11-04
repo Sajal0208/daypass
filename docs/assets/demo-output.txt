@@ -1,30 +1,45 @@
 $ daypass open prod --ttl 30m --reason "why did signups drop on Monday"
-Lease 2ceae5b9 open on "prod" until 2026-10-30T06:20:47.784Z (30m). Reason: why did signups drop on Monday
+Lease 434c787d open on "prod" until 2026-11-04T12:15:15.794Z (30m). Reason: why did signups drop on Monday
 Your AI session can now use the daypass MCP tools. Close early with: daypass close
 
 $ daypass status
-Lease 2ceae5b9 on "prod" by dev@laptop: 30 min left. Reason: why did signups drop on Monday
+Lease 434c787d on "prod" by dev@laptop: 30 min left. Reason: why did signups drop on Monday
 
 $ daypass doctor prod
 ✔ node >= 20       v25.0.0
-✔ config           /tmp/daypass-demo.jDv6no/.daypass/config.json (prod)
-✔ target           prod: daypass_ro@localhost:5439/postgres via password
+✔ files            /tmp/daypass-demo.habYKA/.daypass and config.json, lease.json: yours, no symlinks, 0700/0600
+✔ config           /tmp/daypass-demo.habYKA/.daypass/config.json (prod)
+✔ audit log        0 event(s), all readable
+✔ target           prod: daypass_ro@localhost:5472/postgres via password
+✔ tls              off (ssl: false / sslmode=disable): for a local database only
 ✔ dns              localhost → ::1
-✔ tcp              localhost:5439 open
-✔ lease            2ceae5b9 until 2026-10-30T06:20:47.784Z
+✔ tcp              localhost:5472 open
+✔ lease            434c787d until 2026-11-04T12:15:15.794Z
 ✔ db login         as daypass_ro; read_only=on; PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on aarch64-unknown-linux-gnu
-✔ write blocked    write attempt rejected, as it should be
+✔ role settings    5 role defaults as set up
+✔ write blocked    no write privilege in any schema; no CREATE; owns nothing; no other roles; no SUPERUSER/REPLICATION/BYPASSRLS/CREATEROLE/CREATEDB; temp tables allowed (PUBLIC has TEMP; daypass sql --revoke-public-temp)
+✔ other schemas    nothing readable outside public
+✔ foreign servers  no foreign server reachable
+✔ default privileges none for PUBLIC or the role
+✔ catalog grants   as a fresh cluster has them
+✔ materialized views none readable stores what only the owner could see
+✔ views as owner   no readable view reads row-level-security data or an unreadable relation with its owner's rights
+✔ other databases  warning: can connect to 1 other database(s) on this server: template1 — nothing there was checked; as the owner: REVOKE CONNECT ON DATABASE <db> FROM PUBLIC (and grant your app roles)
+✔ hidden columns   2 listed (2 with partitions/children) not readable; 0 view(s) over them withheld
+✔ definer functions none executable
+✔ functions        none executable outside pg_catalog
 
 $ DEMO=1 node scripts/smoke.mjs
-✔ query {"sql":"select id, name from customers"} → 4 row(s), 17 ms, lease 30 min left
-✖ query {"sql":"select * from customers"} → Query failed after 2 ms: permission denied for table customers
+✔ query {"sql":"select id, name from customers"} → 4 row(s), 21 ms, lease 30 min left
+✖ query {"sql":"select * from customers"} → Query failed after 6 ms.
 ✖ query {"sql":"update customers set name = 'x'"} → Blocked: Only SELECT is allowed (got Update)
 
-$ daypass log -n 3
-2026-10-30T05:50:48.511Z ok   dev@laptop prod query 4r 17ms  select id, name from customers
-2026-10-30T05:50:48.531Z ERR  dev@laptop prod query -r 2ms  select * from customers  <- permission denied for table customers
-2026-10-30T05:50:48.534Z BLK  dev@laptop prod query -r -ms  update customers set name = 'x'  <- Only SELECT is allowed (got Update)
+$ daypass log -n 4
+2026-11-04T11:45:16.670Z ok   dev@laptop prod query 4r 21ms  select id, name from customers
+2026-11-04T11:45:16.696Z ERR  dev@laptop prod query -r 6ms  select * from customers  <- permission denied for table customers
+2026-11-04T11:45:16.705Z BLK  dev@laptop prod query -r -ms  update customers set name = 'x'  <- Only SELECT is allowed (got Update)
+2026-11-04T11:45:16.708Z SRV  dev@laptop prod server  <- MCP transport closed (stdin ended)
 
 $ daypass close
-Lease 2ceae5b9 closed.
+Lease 434c787d closed.
 

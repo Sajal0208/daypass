@@ -12,6 +12,18 @@
             "onFailure": "block"
           }
         ]
+      },
+      {
+        "matcher": "^(Bash|Monitor|Read|Write|Edit|MultiEdit|NotebookEdit|Grep|Glob)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/state-guard.mjs"],
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
       }
     ]
   }

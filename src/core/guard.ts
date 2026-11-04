@@ -97,8 +97,20 @@ function analyzeIsOff(arg: any): boolean {
   return false;
 }
 
-/** Only SELECT and EXPLAIN (without ANALYZE) get through. Pure function: no I/O. */
+/**
+ * Only SELECT and EXPLAIN (without ANALYZE) get through. Pure function: no I/O.
+ * Never throws: any internal failure (e.g. the WASM scanner emitting JSON that JSON.parse
+ * rejects for raw control characters) is a refusal.
+ */
 export async function checkSql(sql: string): Promise<GuardResult> {
+  try {
+    return await check(sql);
+  } catch (e: any) {
+    return { ok: false, reason: `SQL could not be checked: ${e?.message ?? String(e)}` };
+  }
+}
+
+async function check(sql: string): Promise<GuardResult> {
   await ready();
   if (!sql || sql.trim() === '') return { ok: false, reason: 'SQL is empty' };
   const bytes = Buffer.byteLength(sql, 'utf8');
@@ -183,6 +195,19 @@ function walk(root: any): string | null {
         const parts: string[] = ((value as any)?.funcname ?? []).map((p: any) => p?.String?.sval ?? '');
         const bare = parts[parts.length - 1]?.toLowerCase();
         if (bare && isBannedFunction(bare)) return `Function ${bare}() is not allowed`;
+      }
+      // Attribute notation is a function call too: Postgres reads `(arg).f` and `tbl.f` as
+      // f(arg) / f(tbl). Every name in an indirection chain may be one (`(3).f.g` is g(f(3))),
+      // and in a qualified column ref only the last name can be (earlier ones are schema and
+      // relation names; a bare name is always a column). A column named like a banned function
+      // is refused when written qualified: fail closed.
+      const attrs: any[] =
+        key === 'A_Indirection' ? ((value as any)?.indirection ?? [])
+        : key === 'ColumnRef' && ((value as any)?.fields?.length ?? 0) > 1 ? [(value as any).fields.at(-1)]
+        : [];
+      for (const a of attrs) {
+        const name = a?.String?.sval;
+        if (typeof name === 'string' && isBannedFunction(name)) return `Function ${name.toLowerCase()}() is not allowed`;
       }
       stack.push(value);
     }

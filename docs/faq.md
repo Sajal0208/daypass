@@ -51,6 +51,6 @@ In order of speed:
 1. `daypass close` on the machine: deletes the lease and removes the security-group rule. The next tool call is refused.
 2. In the database, as the owner: `ALTER ROLE daypass_ro NOLOGIN;` then `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = 'daypass_ro';`. This ends every connection on every laptop at once. `ALTER ROLE daypass_ro LOGIN;` restores it.
 3. On AWS: remove `rds-db:connect` from the person's policy, or revoke their credentials. `daypass sweep <target>` cleans any rule they left.
-4. For a password target: `ALTER ROLE daypass_ro PASSWORD 'new';` and update the configs you still trust.
+4. For a password target: `\password daypass_ro` in `psql` as the owner, and update the configs you still trust.
 
 The audit file on each machine stays; that is the record of what ran.

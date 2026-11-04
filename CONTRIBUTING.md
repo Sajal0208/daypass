@@ -16,8 +16,15 @@ End-to-end against a real Postgres (Docker is easiest):
 ```bash
 docker run --rm -d --name pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16
 npm run build                      # ci-integration.sh runs dist/cli/main.js and does not build it
-OWNER_URL=postgres://postgres:postgres@localhost:5432/postgres scripts/ci-integration.sh
+DAYPASS_CI_OWNER_URL=postgres://postgres:postgres@localhost:5432/postgres scripts/ci-integration.sh
 ```
+
+The script creates and drops schemas, tables and roles, so it reads its own variable,
+`DAYPASS_CI_OWNER_URL`, and ignores the `OWNER_URL` the user docs have you export for a real
+database. Every host the URL names (the host part, `host=` / `hostaddr=` parameters, comma
+lists) must be `localhost`, `127.0.0.1` or `::1`, or it refuses to start. Point it only at a
+throwaway container. (`DAYPASS_CI_ALLOW_REMOTE=1` lifts the host check for a disposable remote
+server; never use it against a database you care about.)
 
 ## Rules of the road
 
@@ -39,7 +46,7 @@ OWNER_URL=postgres://postgres:postgres@localhost:5432/postgres scripts/ci-integr
   `role SQL + doctor + MCP against real Postgres`, `no private identifiers`) must be green, and
   the PR is squash-merged. The PR title becomes the commit message on `main`, so it has to be a
   valid conventional-commit line. (A ruleset that enforces this is still pending, see
-  *Maintainer setup (pending)* below; until then it is a rule we follow, not one GitHub enforces.)
+  *Maintainer setup* below; until then it is a rule we follow, not one GitHub enforces.)
 - **No private identifiers, anywhere in history.** `scripts/scrub-check.sh` runs in CI on the
   working tree, the index and the PR's commits. With `SCRUB_HISTORY=1` it scans every commit
   reachable from *any* ref (local branches, remote-tracking branches, tags and the latest stash
@@ -49,7 +56,7 @@ OWNER_URL=postgres://postgres:postgres@localhost:5432/postgres scripts/ci-integr
   you are about to push. Hits from refs you are not pushing (an old local backup branch, a stale
   remote-tracking branch) do not block your push, but delete those refs when you can: the full
   scan only passes once every ref on your machine is clean, and on a maintainer's clone it does
-  not pass yet (see *Maintainer setup (pending)*).
+  not pass yet (see the clean-up note under *Maintainer setup*).
 
 ## Releasing (maintainers)
 
@@ -76,7 +83,7 @@ Releases are cut by [release-please](https://github.com/googleapis/release-pleas
    `daypass sql --role daypass_smoke_role` from it (what users will install is tested, not the
    checkout), then uploads the tarball with its sha256.
 6. Approve the publish. The `publish` job runs in the `npm-publish` GitHub environment, which
-   (once set up, see below) has a required reviewer and only admits `v*` tags, so the run waits
+   has a required reviewer and only admits `v*` tags, so the run waits
    under *Actions* until a maintainer approves it. It runs no repository or dependency code: it
    downloads the tarball, checks the sha256, and runs
    `npm publish <tarball> --provenance --access public` using **npm trusted publishing** (OIDC):
@@ -93,25 +100,34 @@ Pre-1.0 semantics are on (`bump-minor-pre-major`, `bump-patch-for-minor-pre-majo
 bumps the minor, a `fix` the patch, and a `!` / `BREAKING CHANGE` bumps the minor, not the
 major.
 
-### Maintainer setup (pending)
+### Maintainer setup
 
-**None of this is done yet.** Until it is, the release flow above is not protected the way it
-describes: GitHub creates the `npm-publish` environment on the first run *without* a reviewer or
-tag policy, and the publish step fails because npm does not trust the workflow yet. Do these in
-order, before the next release:
+Done:
 
-1. GitHub: create the environment `npm-publish` with a required reviewer and a deployment
-   policy that only admits tags matching `v*`.
-2. npmjs.com: package *Settings* > *Trusted Publisher* > GitHub Actions, with user `Sajal0208`,
-   repository `daypass`, workflow filename `release.yml`, environment `npm-publish`.
-3. GitHub: *Settings* > *Actions* > *General* > "Allow GitHub Actions to create and approve pull
-   requests" on (release-please opens the release PR with the workflow token).
-4. GitHub: *Settings* > *Security* > enable private vulnerability reporting (SECURITY.md sends
-   reporters there first).
-5. GitHub: a ruleset on `main` (pull request required, the four CI checks above required) and
-   repository merge settings with squash as the only merge method.
-6. Delete the `NPM_TOKEN` repository secret, revoke that token on npmjs.com, and set the
-   package's publishing access to "require two-factor authentication and disallow tokens".
+1. GitHub: the `npm-publish` environment exists with a required reviewer and a deployment policy
+   that only admits tags matching `v*`, so every publish waits for a maintainer's approval.
+
+Check (believed set up, not yet proven by a release):
+
+1. npmjs.com: the package trusts `release.yml` in this repository, running in the `npm-publish`
+   environment (*Settings* > *Trusted Publisher* > GitHub Actions, user `Sajal0208`, repository
+   `daypass`, workflow `release.yml`, environment `npm-publish`). The first OIDC publish is the
+   proof; until then, confirm it on npmjs.com.
+2. GitHub: *Settings* > *Actions* > *General* > "Allow GitHub Actions to create and approve pull
+   requests" is on (release-please opens the release PR with the workflow token).
+
+Pending, in this order:
+
+1. Delete the `NPM_TOKEN` repository secret (left over from the first release workflow, which
+   used it) and revoke that token on npmjs.com.
+2. npmjs.com: set the package's publishing access to "require two-factor authentication and
+   disallow tokens", so trusted publishing is the only way to publish.
+3. GitHub: a branch ruleset on `main`: pull request required, the four CI checks above
+   required, no force-push or deletion. The Claude Code plugin installs from `main`, so this
+   protects plugin users too.
+4. GitHub: a tag ruleset on `v*` so only maintainers can create, move or delete release tags.
+5. GitHub: *Settings* > *Security* > enable private vulnerability reporting (SECURITY.md offers
+   it next to email), and secret scanning with push protection and Dependabot security updates.
 
 Clean-up for the full history scan (`SCRUB_HISTORY=1`): delete local backup branches made
 before the history was squashed, and delete the remaining `dependabot/*` branches on `origin`

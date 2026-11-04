@@ -88,3 +88,36 @@ describe('tokenize: second review fixes', () => {
     expect(tokenize('short')[0].value).toBe('short');
   });
 });
+
+describe('tokenize: third review fixes (match the Postgres scanner)', () => {
+  it('ends a -- comment at \\r as well as \\n, like Postgres (non_newline is [^\\n\\r])', () => {
+    expect(kinds('a --x\r b')).toEqual(['ident:a', 'ident:b']);
+    expect(kinds('a --x\r\n b')).toEqual(['ident:a', 'ident:b']);
+    expect(kinds("U&\"!0070hone\" --c\r UESCAPE '!'")[0]).toBe('ident:phone');
+  });
+  it('reads the UESCAPE character from any string constant: E-strings, dollar quotes, continuations', () => {
+    for (const sql of [`U&"em!0061il" UESCAPE $$!$$`, `U&"em!0061il" UESCAPE $q$!$q$`, `U&"em!0061il" UESCAPE E'!'`, `U&"em!0061il" UESCAPE E'\\041'`, `U&"em!0061il" UESCAPE E'\\x21'`, `U&"em!0061il" UESCAPE '!'\n''`]) {
+      const t = tokenize(sql);
+      expect(t, sql).toHaveLength(1);
+      expect(t[0].value, sql).toBe('email');
+    }
+    // `uescapex` is a different word: nothing is consumed
+    expect(kinds(`U&"a" uescapex '!'`)).toEqual(['ident:a', 'ident:uescapex', 'string:']);
+  });
+  it('joins string constants separated by whitespace with a newline (quote continuation)', () => {
+    expect(kinds("'a'\n'b' x")).toEqual(['string:', 'ident:x']);
+    expect(kinds("'a' --c\n 'b' x")).toEqual(['string:', 'ident:x']);
+    expect(kinds("E'a'\r'b' x")).toEqual(['string:', 'ident:x']);
+    expect(kinds("'a' 'b'")).toEqual(['string:', 'string:']);
+    expect(kinds("'a' /* c */\n'b'")).toEqual(['string:', 'string:']);
+    expect(tokenize("'a'\n'b\\' x'")[0].ambiguous).toBe(true);
+  });
+  it("reads B'...' and X'...' without '' doubling", () => {
+    expect(tokenize("X'01''10'").map((t) => [t.type, t.start, t.end])).toEqual([['string', 0, 5], ['string', 5, 9]]);
+    expect(tokenize("B'01''\\' , x")[1].ambiguous).toBe(true);
+  });
+  it('reads numbers as Postgres 16+ does', () => {
+    expect(kinds('1..2')).toEqual(['number:1', 'punct:.', 'punct:.', 'number:2']);
+    expect(kinds('0o17 0b101 1_000.5_5e1_0')).toEqual(['number:0o17', 'number:0b101', 'number:1_000.5_5e1_0']);
+  });
+});

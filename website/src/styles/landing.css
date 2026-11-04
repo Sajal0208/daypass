@@ -73,6 +73,14 @@
 	a:hover {
 		text-decoration: underline;
 	}
+	/* A link inside running text is underlined, so it does not rely on colour alone
+	   (Lighthouse "link-in-text-block"). Nav, footer lists and buttons stay plain. */
+	p a,
+	li a:not(nav a) {
+		text-decoration: underline;
+		text-underline-offset: 0.15em;
+		text-decoration-thickness: 1px;
+	}
 	code,
 	pre,
 	kbd {

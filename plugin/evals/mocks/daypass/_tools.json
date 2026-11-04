@@ -4,9 +4,9 @@
       "name": "daypass_status",
       "description": "Show whether a Daypass lease is open, for which database, and how long is left.",
       "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
-        "properties": {},
-        "$schema": "http://json-schema.org/draft-07/schema#"
+        "properties": {}
       },
       "execution": {
         "taskSupport": "forbidden"
@@ -14,11 +14,11 @@
     },
     {
       "name": "list_tables",
-      "description": "List tables with estimated row counts in the schemas this lease may see.",
+      "description": "List the tables and views this lease can read (at least one column), with estimated row counts.",
       "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
-        "properties": {},
-        "$schema": "http://json-schema.org/draft-07/schema#"
+        "properties": {}
       },
       "execution": {
         "taskSupport": "forbidden"
@@ -26,7 +26,7 @@
     },
     {
       "name": "describe_table",
-      "description": "Columns, types, nullability and indexes for one table.",
+      "description": "Columns, types, nullability and indexes for one table (indexes touching hidden columns are omitted).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -47,7 +47,7 @@
     },
     {
       "name": "query",
-      "description": "Run one read-only SELECT against the leased database. Hard limits: one statement, SELECT only, 10 s, 500 rows. Some columns (PII, secrets) are hidden, so SELECT * fails on those tables: use describe_table and name columns. Use explain first on big tables.",
+      "description": "Run one read-only SELECT against the leased database. Hard limits: one statement, SELECT only, 10 s (or less if the lease is about to expire), up to the configured row cap (default 500 rows) and byte budget (default 1000000 bytes); results are cut in the database, not after. Some columns (PII, secrets) are hidden, so SELECT * fails on those tables: use describe_table and name columns. Use explain first on big tables.",
       "inputSchema": {
         "type": "object",
         "properties": {

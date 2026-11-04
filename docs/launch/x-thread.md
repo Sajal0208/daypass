@@ -1,15 +1,15 @@
 # X thread (7 posts)
 
 Character counts are for the text inside each block, without the trailing newline, with
-every URL (including the `<SITE_URL>` placeholder) counted as 23 characters, which is what
-X charges for any link. Limit is 280. Replace `<SITE_URL>` before posting.
+every URL (including the site URL) counted as 23 characters, which is what
+X charges for any link. Limit is 280.
 
-## 1 (pitch, attach the GIF) — 272 chars
+## 1 (pitch, attach the GIF) — 269 chars
 
 ```
 We let Claude Code read our production Postgres. Not by pasting a URL into a config.
 
-daypass open prod --ttl 45m --reason "debug campaign 1234"
+daypass open prod --ttl 45m --reason "debug order 1234"
 
 Read-only. PII columns hidden by the database. Every query logged. The door shuts on its own.
 
@@ -26,12 +26,12 @@ daypass_ro: SELECT table by table on visible columns, no write privilege, no def
 A column REVOKE does nothing while the role holds table-level SELECT. Our first draft got that wrong.
 ```
 
-## 3 (the second wrong draft) — 255 chars
+## 3 (the second wrong draft) — 276 chars
 
 ```
-Then a review after 0.1.0: hidden columns leaked through views, partitions and SECURITY DEFINER functions, and the role could reset its own timeouts.
+Then a review after 0.1.0: hidden columns leaked through views, matviews, partitions, child tables and SECURITY DEFINER functions. doctor could not tell.
 
-The next release withholds those views, fails setup on definer functions, and doctor checks the catalog.
+Next release: those views withheld, setup fails on definer functions, doctor checks the catalog, settings drift included.
 ```
 
 ## 4 (layer: credentials) — 267 chars
@@ -67,7 +67,7 @@ Postgres only for now. Known limits are in the threat model, first.
 
 npm install -g daypass
 https://github.com/Sajal0208/daypass
-<SITE_URL>
+https://daypass-lac.vercel.app
 
 Find a hole? SECURITY.md has the private reporting route, not the issue tracker.
 ```

@@ -7,16 +7,18 @@ argument-hint: "<target>"
 
 # Daypass hidden check
 
-`$ARGUMENTS` is the target name from `~/.daypass/config.json`; ask for it if missing. Run with Bash:
+`$ARGUMENTS` is the target name, as in `daypass open <target>`; ask for it if missing (do not read
+`~/.daypass/config.json` to find it: it can hold passwords). Run with Bash, with the target in
+double quotes:
 
 ```bash
-daypass hidden check --file "${DAYPASS_HIDDEN_FILE:-$HOME/.daypass/hidden-columns.txt}" --live <target>
+daypass hidden check --file "${DAYPASS_HIDDEN_FILE:-$HOME/.daypass/hidden-columns.txt}" --live "<target>"
 ```
 
 No lease is needed to run it, but on an RDS target with `securityGroupId` the per-lease IP rule is
 what opens the port: with no lease there is no rule and `--live` can time out at TCP (`timeout after
 5 s`). Then either run it while a lease is open, or point at the schema instead (`--prisma
-<path>` / `--url "$OWNER_URL"` in the admin's shell). Exit 0 prints `hidden list matches the schema
+<path>` / `--url-env OWNER_URL` in the admin's shell). Exit 0 prints `hidden list matches the schema
 (...)`: report it and stop. Exit 1
 prints up to two lists; explain each and propose the fix, as text only (`#` to end of line is a comment
 on any line of the file):
@@ -36,7 +38,8 @@ Then show the re-apply command the user runs after editing the file, as the data
 daypass sql --hide-file "${DAYPASS_HIDDEN_FILE:-$HOME/.daypass/hidden-columns.txt}" | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1
 ```
 
-Never edit the hidden list file and never run `daypass sql` or `psql` yourself: both change what the
-production role can read. If the file is missing (`ENOENT`), point at
+Never edit the hidden list file (least of all with a `!table.column` allow line, which tells the PII
+guard to pass that column) and never run `daypass sql` or `psql` yourself: both change what the
+production role can read. The user makes the edits you propose. If the file is missing (`ENOENT`), point at
 `daypass hidden suggest --live <target> > <file>` and the review checklist in `docs/hidden-columns.md`.
 Report any other error (unknown target, connection refused, exit code other than 0/1) verbatim.

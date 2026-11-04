@@ -8,3 +8,5 @@ export { isLeaseLive, parseTtl, shouldReleaseNetwork } from './lease.js';
 export type { Lease } from './lease.js';
 export { looksSensitive, suggestHidden, parsePrismaColumns, parseHiddenList, parseHiddenFile, diffHidden } from './hidden.js';
 export type { ColumnInfo } from './hidden.js';
+export type { MatviewTaint } from './hidden.js';
+export { MATVIEW_LEAKS_SQL, MATVIEW_TAINT_SQL, MATVIEW_SQL_PARAMS, MATVIEW_SAFE_CATALOGS, MATVIEW_SAFE_FUNCTIONS } from './matview.js';

@@ -4,14 +4,10 @@ name: Release
 #
 # npm authentication is trusted publishing (OIDC): this workflow uses no npm token. npm trusts
 # this exact workflow file (release.yml) in Sajal0208/daypass, running in the `npm-publish`
-# GitHub environment, and mints a short-lived credential for each run. The environment is meant
-# to have a required reviewer (a human approves every publish) and a deployment policy that only
-# admits v* tags.
-#
-# PENDING maintainer setup: none of that exists yet. Until the `npm-publish` environment is
-# created with its reviewer and tag policy, GitHub creates it on the first run WITHOUT any
-# protection, and until the npm Trusted Publisher is configured the publish step fails. See
-# "Maintainer setup (pending)" in CONTRIBUTING.md for the steps, in order.
+# GitHub environment, and mints a short-lived credential for each run. The environment has a
+# required reviewer (a human approves every publish) and a deployment policy that only admits
+# v* tags. What is still pending (retiring the old npm token, npm's "disallow tokens" setting,
+# rulesets on main and v* tags) is listed under "Maintainer setup" in CONTRIBUTING.md.
 #
 # Normally the tag comes from merging the release-please PR (.github/workflows/release-please.yml),
 # which then dispatches this workflow on the tag. A hand-pushed tag works the same way:

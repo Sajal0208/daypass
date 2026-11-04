@@ -21,22 +21,27 @@ SELECT. When it expires every tool but the status check refuses.
 
 The wall is the database role's grants, not the client. `daypass_ro` gets SELECT table by
 table on visible columns only and no write privilege anywhere. PII columns are hidden with
-column-level grants, so `SELECT *` on those tables fails in Postgres, and views over them are
-not granted. The role's read-only default and 10 s timeout are defaults it could change in
-its own psql session, so for the agent the client holds them: every call runs in a read-only
-transaction, and Postgres's own parser (`libpg-query`) allows one SELECT or EXPLAIN and
-rejects data-modifying CTEs, FOR UPDATE, SELECT INTO, EXPLAIN ANALYZE and a list of
-functions such as `pg_sleep` and `query_to_xml`. Results are capped at 500 rows and 1 MB in
-the database. On RDS the role logs in with a 15-minute IAM token; no password is stored. Each
-call is logged before it runs and when it ends.
+column-level grants, so `SELECT *` on those tables fails in Postgres, and views over them, or
+over a table with row-level security, are not granted. The role's read-only default and 10 s
+timeout are defaults it could change in its own psql session, so for the agent the client
+holds them: every call runs in a read-only transaction, and Postgres's own parser
+(`libpg-query`) allows one SELECT or EXPLAIN and rejects data-modifying CTEs, FOR UPDATE,
+SELECT INTO, EXPLAIN ANALYZE and a list of functions such as `pg_sleep` and `query_to_xml`.
+Results are capped at 500 rows and 1 MB in the database. On RDS the role logs in with a
+15-minute IAM token; no password is stored. Each call is logged before it runs and when it
+ends.
 
-A review after 0.1.0 found the role leaking hidden columns through views, partitions and
-SECURITY DEFINER functions; <VERSION> fixes that and the post-mortem is in the blog post.
+A review after 0.1.0 found the role leaking hidden columns through views, materialized views,
+partitions, inheritance children and SECURITY DEFINER functions, able to write through a
+definer function, and `doctor` unable to tell; 0.2.0 fixes that and the post-mortem is in
+the blog post.
 
 Not covered: a column you forgot to list; PII inside the SQL text in the audit file; a
 shared AWS identity hiding who ran what; hidden column names (the catalog is readable);
-extension functions the block list does not know; an agent that can also run shell commands
-can read `~/.daypass`. New tables are invisible until you re-run the SQL. Postgres only.
+extension functions the block list does not know; other databases on the same server the
+role can still connect to (`doctor` warns); an agent that can also run shell commands can
+read and edit `~/.daypass` (the plugin's hook blocks the plain forms; it is a fence, not a
+control). New tables are invisible until you re-run the SQL. Postgres only.
 
 MIT. npm: `daypass`.
 

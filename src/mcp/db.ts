@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { Signer } from '@aws-sdk/rds-signer';
 import { fromIni } from '@aws-sdk/credential-providers';
 import type { ResolvedTarget, TargetConfig } from './state.js';
@@ -27,7 +28,13 @@ export type SslOptions = { rejectUnauthorized: true; ca?: string } | undefined;
  * `sslCa` if set. Only `ssl: false` (local dev) turns TLS off.
  */
 export function sslOptions(t: TargetConfig, rdsCaPem: string | undefined): SslOptions {
-  if (t.ssl === false) return undefined;
+  if (t.ssl === false) {
+    // An IAM token, or anything bound for RDS, crosses the internet: never in clear text.
+    if (t.region || (t.host && isRdsHost(t.host))) {
+      throw new Error('TLS cannot be turned off for an RDS or IAM (region) target: remove ssl: false / sslmode=disable.');
+    }
+    return undefined;
+  }
   if (t.sslCa) return { rejectUnauthorized: true, ca: readFileSync(t.sslCa, 'utf8') };
   if ((t.region || (t.host && isRdsHost(t.host))) && rdsCaPem) return { rejectUnauthorized: true, ca: rdsCaPem };
   return { rejectUnauthorized: true };
@@ -42,16 +49,49 @@ export function rdsCa(): string | undefined {
   }
 }
 
-/** True for an AWS RDS endpoint, so a plain URL target can pin the bundled RDS CA like an IAM target does. */
+/**
+ * `.rds.` under the DNS suffix of every AWS partition (commercial and GovCloud, China, the
+ * European Sovereign Cloud, the ISO partitions), with or without a trailing root dot.
+ */
+const RDS_HOST = /\.rds\.(?:amazonaws\.com(?:\.cn)?|amazonaws\.eu|c2s\.ic\.gov|sc2s\.sgov\.gov|cloud\.adc-e\.uk|csp\.hci\.ic\.gov)\.?$/i;
+
+/**
+ * True for an AWS RDS endpoint: TLS cannot be turned off for it, and a plain URL target pins the
+ * bundled RDS CA like an IAM target does (the bundle holds the commercial-partition roots; other
+ * partitions need `sslCa`).
+ */
 export function isRdsHost(host: string): boolean {
-  return /\.rds\.amazonaws\.com$/i.test(host);
+  return RDS_HOST.test(host);
 }
 
-let cached: { key: string; pool: pg.Pool; tokenAt: number } | null = null;
-/** In-flight (re)creation, so two callers at the refresh boundary share one pool instead of each building one. */
-let creating: Promise<pg.Pool> | null = null;
+let cached: { key: string; pool: pg.Pool } | null = null;
+/** Pools replaced after a config change, ended once nobody is waiting on them. */
+const retired = new Set<pg.Pool>();
 
-async function password(t: ResolvedTarget): Promise<string> {
+/**
+ * A token getter that fetches at most once per `ttlMs` (concurrent callers share one fetch) and
+ * never caches a failure. Exported for tests.
+ */
+export function cachedToken(fetch: () => Promise<string>, ttlMs: number, clock: () => number = Date.now): () => Promise<string> {
+  let token: { value: string; at: number } | null = null;
+  let pending: Promise<string> | null = null;
+  return () => {
+    if (token && clock() - token.at <= ttlMs) return Promise.resolve(token.value);
+    pending ??= fetch()
+      .then((value) => {
+        token = { value, at: clock() };
+        return value;
+      })
+      .finally(() => (pending = null));
+    return pending;
+  };
+}
+
+/**
+ * The pool's password. For IAM targets it is a function pg calls for each new connection, so a
+ * fresh token is used whenever one is needed and the pool never has to be rebuilt to refresh it.
+ */
+function password(t: ResolvedTarget): string | (() => Promise<string>) {
   if (!t.region) {
     if (!t.password) throw new Error('Target has neither region (IAM auth) nor password');
     return t.password;
@@ -63,51 +103,66 @@ async function password(t: ResolvedTarget): Promise<string> {
     region: t.region,
     ...(t.awsProfile ? { credentials: fromIni({ profile: t.awsProfile }) } : {}),
   });
-  return signer.getAuthToken();
+  return cachedToken(() => signer.getAuthToken(), TOKEN_TTL_MS);
+}
+
+/** Everything that decides where and how the pool connects; a change means a new pool. */
+function poolKey(name: string, t: ResolvedTarget): string {
+  const secret = t.password ? createHash('sha256').update(t.password).digest('hex') : '';
+  return JSON.stringify([name, t.host, t.port, t.database, t.user, t.ssl ?? null, t.sslCa ?? null, t.region ?? null, t.awsProfile ?? null, secret]);
 }
 
 /**
- * One small pool per target. Even if the DB role were misconfigured, every
- * connection also forces read-only + timeouts at the session level.
- * `now` is injectable for tests of the refresh path.
+ * End a replaced pool without pulling it from under a caller that already holds it: after a
+ * grace period, and only once nobody is queued for one of its connections. Checked-out
+ * connections finish their call first (pg-pool's end() waits for them).
  */
-export async function getPool(name: string, t: ResolvedTarget, now = Date.now()): Promise<pg.Pool> {
+function retire(pool: pg.Pool): void {
+  retired.add(pool);
+  const tryEnd = () => {
+    if (!retired.has(pool)) return;
+    if (pool.waitingCount > 0) {
+      setTimeout(tryEnd, 200).unref();
+      return;
+    }
+    retired.delete(pool);
+    void pool.end().catch(() => {});
+  };
+  setTimeout(tryEnd, 1000).unref();
+}
+
+/**
+ * One connection per process, per target: the role's CONNECTION LIMIT is shared by every
+ * Daypass process (one per AI session), so concurrent calls queue here instead. An idle
+ * connection is closed after a few seconds. Even if the DB role were misconfigured, every
+ * connection also forces read-only + timeouts at the session level.
+ */
+export async function getPool(name: string, t: ResolvedTarget): Promise<pg.Pool> {
   if (shuttingDown) throw new Error('Daypass is shutting down; no new database connections.');
-  const key = `${name}:${t.host}:${t.user}`;
-  if (cached && cached.key === key && now - cached.tokenAt <= TOKEN_TTL_MS) return cached.pool;
-  if (!creating) {
-    creating = (async () => {
-      try {
-        if (cached) {
-          await cached.pool.end().catch(() => {});
-          cached = null;
-        }
-        const pool = new pg.Pool({
-          host: t.host,
-          port: t.port,
-          database: t.database,
-          user: t.user,
-          password: await password(t),
-          ssl: sslOptions(t, rdsCa()),
-          max: 2,
-          idleTimeoutMillis: 30_000,
-          connectionTimeoutMillis: 10_000,
-          application_name: 'daypass',
-          options:
-            `-c default_transaction_read_only=on -c statement_timeout=${STATEMENT_TIMEOUT_MS} -c idle_in_transaction_session_timeout=30000 -c lock_timeout=1000` +
-            // The guard parses with standard_conforming_strings on; the server must agree, or '\'
-            // means different things to each and one "statement" becomes several.
-            ` -c standard_conforming_strings=on`,
-        });
-        pool.on('error', () => {});
-        cached = { key, pool, tokenAt: now };
-        return pool;
-      } finally {
-        creating = null;
-      }
-    })();
-  }
-  return creating;
+  const key = poolKey(name, t);
+  if (cached && cached.key === key) return cached.pool;
+  const pool = new pg.Pool({
+    host: t.host,
+    port: t.port,
+    database: t.database,
+    user: t.user,
+    password: password(t),
+    ssl: sslOptions(t, rdsCa()),
+    max: 1,
+    idleTimeoutMillis: 5_000,
+    // Includes time queued behind another call on the single connection (up to the 10 s statement cap).
+    connectionTimeoutMillis: 15_000,
+    application_name: 'daypass',
+    options:
+      `-c default_transaction_read_only=on -c statement_timeout=${STATEMENT_TIMEOUT_MS} -c idle_in_transaction_session_timeout=30000 -c lock_timeout=1000` +
+      // The guard parses with standard_conforming_strings on; the server must agree, or '\'
+      // means different things to each and one "statement" becomes several.
+      ` -c standard_conforming_strings=on`,
+  });
+  pool.on('error', () => {});
+  if (cached) retire(cached.pool);
+  cached = { key, pool };
+  return pool;
 }
 
 let shuttingDown = false;
@@ -177,11 +232,19 @@ export async function cancelAndDestroy(client: pg.PoolClient | pg.Client, why: E
 }
 
 export async function closePool(): Promise<void> {
-  if (creating) await creating.catch(() => {});
-  if (cached) {
-    await cached.pool.end().catch(() => {});
-    cached = null;
-  }
+  const pools = [...retired, ...(cached ? [cached.pool] : [])];
+  retired.clear();
+  cached = null;
+  await Promise.all(pools.map((p) => p.end().catch(() => {})));
+}
+
+/** The role's CONNECTION LIMIT is full (SQLSTATE 53300 names the role). */
+function connectionLimitError(e: any): Error | null {
+  if (e?.code !== '53300' && !/too many connections for role/i.test(e?.message ?? '')) return null;
+  return new Error(
+    `${e.message}: the Daypass role's connection limit is reached. Every daypass process (one per AI session) ` +
+      'holds at most one connection and drops it after a few idle seconds; close other sessions or retry shortly.',
+  );
 }
 
 export interface BoundedOptions {
@@ -193,6 +256,12 @@ export interface BoundedOptions {
    * time spent waiting for a connection cannot stretch the call past the lease.
    */
   deadlineMs?: number;
+  /**
+   * How long past the statement timeout to wait for the server before giving up on it (a dropped
+   * network or a stalled server never answers, and statement_timeout is enforced by the server).
+   * Default STALL_GRACE_MS.
+   */
+  graceMs?: number;
   /** Bytes read from the socket before the connection is destroyed. Default MAX_WIRE_BYTES. */
   maxWireBytes?: number;
   /** Test hook: called with the checked-out client before the query runs. */
@@ -207,9 +276,16 @@ export interface BoundedOptions {
  * advisory locks are released and `DISCARD ALL` resets the session, so nothing a call did can
  * reach the next caller; a connection that cannot be reset is dropped.
  */
+export const STALL_GRACE_MS = 5_000;
+
 export async function runBounded(pool: pg.Pool, sql: string, o: BoundedOptions): Promise<pg.QueryResult> {
   const max = o.maxWireBytes ?? MAX_WIRE_BYTES;
-  const client = await pool.connect();
+  let client: pg.PoolClient;
+  try {
+    client = await pool.connect();
+  } catch (e) {
+    throw connectionLimitError(e) ?? e;
+  }
   const left = o.deadlineMs === undefined ? Infinity : o.deadlineMs - Date.now();
   if (left <= 0) {
     client.release();
@@ -232,6 +308,15 @@ export async function runBounded(pool: pg.Pool, sql: string, o: BoundedOptions):
     }
   };
   stream?.on('data', onData);
+  // The server enforces statement_timeout, but only a server that answers can. If nothing comes
+  // back (network gone, server stalled), cut the connection rather than wait for TCP to notice.
+  const graceMs = o.graceMs ?? STALL_GRACE_MS;
+  const watchdog = setTimeout(() => {
+    if (tripped) return;
+    tripped = new Error(`No answer from the database ${Math.round((timeout + graceMs) / 1000)} s into the call; connection closed.`);
+    void cancelAndDestroy(client, tripped);
+  }, timeout + graceMs);
+  watchdog.unref();
   let failure: unknown = null;
   let resetFailed: Error | undefined;
   try {
@@ -262,6 +347,7 @@ export async function runBounded(pool: pg.Pool, sql: string, o: BoundedOptions):
         resetFailed = new Error(`session reset failed: ${e?.message ?? e}`);
       }
     }
+    clearTimeout(watchdog);
     const dead = tripped ?? (isConnectionDead(failure) ? (failure as Error) : resetFailed);
     if (!dead) client.off('error', swallow); // a dead client is discarded by the pool; keep swallowing its last gasps
     client.release(dead);

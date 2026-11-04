@@ -1,0 +1,192 @@
+---
+/**
+ * "Why not just give the agent the DB URL?" as two columns. The left column is the README's
+ * list, word for word; the right column says which layer answers each point, with the facts
+ * from "Why it is safe" and "Compared with the alternatives" (README.md) and docs/concepts.md.
+ */
+const rows = [
+	{
+		topic: 'Credential',
+		url: {
+			lead: 'The password lands in context and config forever.',
+			body: 'It sits in <code>.mcp.json</code>, in the chat transcript, in whatever the client logs. Rotating it later means finding every copy.',
+		},
+		daypass: {
+			lead: 'The tools never hand the agent a password.',
+			body: 'On AWS RDS there is no password at all: a 15-minute IAM token minted from <em>your</em> AWS identity. A URL target keeps a read-only password in <code>~/.daypass/config.json</code> (mode <code>0600</code>).',
+		},
+	},
+	{
+		topic: 'Expiry',
+		url: {
+			lead: 'Nothing expires.',
+			body: 'Access granted for one debugging session is still there next month.',
+		},
+		daypass: {
+			lead: 'A lease ends on its own.',
+			body: '<code>--ttl</code> is between 60 s and 8 h. The next tool call after expiry is refused, and a running query cannot outlive the lease.',
+		},
+	},
+	{
+		topic: 'Writes',
+		url: {
+			lead: 'Writes are possible.',
+			body: 'A URL to the application user can <code>UPDATE</code>, <code>DELETE</code> and <code>DROP</code>. One wrong tool call, or one row of injected text that reads like an instruction, is enough.',
+		},
+		daypass: {
+			lead: 'The role holds no write privilege anywhere.',
+			body: 'Every call runs in <code>BEGIN READ ONLY</code>, and Postgres\'s own parser refuses anything but a single <code>SELECT</code> or <code>EXPLAIN</code> before it is sent.',
+		},
+	},
+	{
+		topic: 'PII',
+		url: {
+			lead: 'PII flows into the model.',
+			body: '<code>SELECT * FROM users</code> ships every email, phone and token to the model provider, and into the transcript.',
+		},
+		daypass: {
+			lead: 'Hidden columns are hidden at the Postgres level.',
+			body: 'The role is granted <code>SELECT</code> on visible columns only, so <code>SELECT *</code> on a table with a hidden column fails with <code>permission denied</code>. The list of columns is yours to write.',
+		},
+	},
+	{
+		topic: 'Audit',
+		url: {
+			lead: 'Nobody can say afterwards what was read.',
+			body: 'No log ties a query to a person and a reason.',
+		},
+		daypass: {
+			lead: 'Every call is logged before it runs and when it ends.',
+			body: 'Two JSON lines per call in <code>~/.daypass/audit.jsonl</code>: time, who, lease id, reason, SQL, rows, ms, error. Refusals get one line with the reason.',
+		},
+	},
+];
+---
+
+<div class="compare" role="table" aria-label="A database URL in the MCP config compared with Daypass">
+	<div class="head" role="row">
+		<span class="topic" role="columnheader">Point</span>
+		<span role="columnheader">DB URL in <code>.mcp.json</code></span>
+		<span class="dp" role="columnheader">Daypass</span>
+	</div>
+	{
+		rows.map((r) => (
+			<div class="row" role="row">
+				<span class="topic" role="rowheader">{r.topic}</span>
+				<div class="cell url" role="cell">
+					<span class="mobile-label" aria-hidden="true">DB URL in .mcp.json</span>
+					<strong>{r.url.lead}</strong>
+					<p set:html={r.url.body} />
+				</div>
+				<div class="cell dp" role="cell">
+					<span class="mobile-label" aria-hidden="true">Daypass</span>
+					<strong>{r.daypass.lead}</strong>
+					<p set:html={r.daypass.body} />
+				</div>
+			</div>
+		))
+	}
+</div>
+<p class="sum">Daypass replaces the URL with a lease, a role, a parser and an audit line.</p>
+
+<style>
+	.compare {
+		max-width: 56rem;
+		border: 1px solid var(--sl-color-hairline-light);
+		border-radius: 0.75rem;
+		overflow: hidden;
+		font-size: 0.925rem;
+		line-height: 1.55;
+	}
+	.head {
+		display: none;
+	}
+	.row {
+		display: grid;
+		gap: 0.75rem;
+		padding: 1rem;
+		border-top: 1px solid var(--sl-color-hairline-light);
+	}
+	.head + .row {
+		border-top: 0;
+	}
+	.topic {
+		font-size: 0.75rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		font-weight: 600;
+		color: var(--land-muted);
+	}
+	.cell {
+		padding: 0.85rem 1rem;
+		border-radius: 0.5rem;
+	}
+	.cell.url {
+		border: 1px solid var(--sl-color-hairline-light);
+	}
+	.cell.dp {
+		background: var(--sl-color-bg-nav);
+		border: 1px solid var(--sl-color-accent);
+	}
+	.cell strong {
+		display: block;
+		color: var(--sl-color-white);
+		font-weight: 600;
+		margin-bottom: 0.25rem;
+	}
+	.cell p {
+		color: var(--sl-color-text);
+	}
+	.mobile-label {
+		display: block;
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		margin-bottom: 0.4rem;
+		color: var(--sl-color-text);
+	}
+	.cell.dp .mobile-label {
+		color: var(--sl-color-text-accent);
+	}
+	.sum {
+		margin-top: 1rem;
+		max-width: 44rem;
+		color: var(--sl-color-white);
+		font-weight: 500;
+	}
+	@media (min-width: 48em) {
+		.head {
+			display: grid;
+			grid-template-columns: 6rem 1fr 1fr;
+			align-items: center;
+			gap: 0.75rem;
+			padding: 0.75rem 1rem;
+			font-size: 0.8rem;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+			font-weight: 600;
+			color: var(--land-muted);
+		}
+		.head .dp {
+			color: var(--sl-color-text-accent);
+		}
+		.head code {
+			text-transform: none;
+			letter-spacing: 0;
+			font-size: 0.85em;
+		}
+		.row {
+			grid-template-columns: 6rem 1fr 1fr;
+			align-items: stretch;
+		}
+		.head + .row {
+			border-top: 1px solid var(--sl-color-hairline-light);
+		}
+		.topic {
+			padding-top: 0.85rem;
+		}
+		.mobile-label {
+			display: none;
+		}
+	}
+</style>

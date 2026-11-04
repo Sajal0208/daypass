@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { renderSetupSql, HIDDEN_RELKINDS, DATA_READING_FUNCTIONS } from '../src/core/hidden.js';
+import { MATVIEW_SAFE_CATALOGS, MATVIEW_SAFE_FUNCTIONS, MATVIEW_LEAKS_SQL } from '../src/cli/doctor.js';
 
 /**
  * The SQL itself can only be proven against a real Postgres (scripts/ci-integration.sh does
@@ -70,8 +71,8 @@ describe('sql/setup-role.sql template', () => {
     expect(alter).not.toMatch(/PASSWORD/);
   });
 
-  it('keeps the DO blocks (create role, rds_iam grant, owned objects + membership, grants + hide + self-check, report)', () => {
-    expect(sql.match(/^DO \$\$/gm)).toHaveLength(6);
+  it('keeps the DO blocks (create role, attributes, rds_iam grant, owned objects + membership, grants + hide + self-check, report, final check)', () => {
+    expect(sql.match(/^DO \$\$/gm)).toHaveLength(7);
     expect(sql).toContain('self-check failed');
   });
 
@@ -162,7 +163,7 @@ describe('sql/setup-role.sql template', () => {
       expect(r).toContain(`'public|t|__ALLOW__'`);
       // No `$` reaches a dollar-quoted body: such entries travel hex-encoded.
       const bodies = doBodies(r);
-      expect(bodies).toHaveLength(6);
+      expect(bodies).toHaveLength(7);
       for (const b of bodies) expect(b).not.toContain('$$');
       const hex = (s: string) => Buffer.from(s, 'utf8').toString('hex');
       for (const e of ["public|t|a$'b", 'public|t|p$$$$q', 'public|t|x$&y', 'public|t|back\\slash']) {
@@ -263,7 +264,7 @@ describe('sql/setup-role.sql template', () => {
     it('1: matviews calling non-catalog or data-reading functions are withheld, with the same pattern as hidden.ts', () => {
       expect(code).toContain(`p.proname ~ '${DATA_READING_FUNCTIONS.source}'`);
       expect(code).toMatch(/:\(funcid\|opfuncid\|aggfnoid\|winfnoid\)/);
-      expect(code).toMatch(/mv\.relkind = 'm'/);
+      expect(code).toMatch(/WITH RECURSIVE tree\(mv, rel, via\) AS \(\n\s+SELECT c\.oid, c\.oid, c\.oid FROM pg_class c\n\s+WHERE c\.relkind = 'm'/);
     });
     it('2: views over catalogs the role cannot read are withheld', () => {
       expect(code).toMatch(/:relid \(\[0-9\]\+\)/);
@@ -297,3 +298,65 @@ describe('sql/setup-role.sql template', () => {
   });
 });
 
+describe('review 2026-11-01', () => {
+  const code = render().split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+  /** The grants block: from its DECLARE to the report block. */
+  const grants = code.slice(code.indexOf('hidden_in     text[]'), code.indexOf('hidden columns verified'));
+  /** The last DO block, run just before COMMIT. */
+  const final = code.slice(code.lastIndexOf('DO $$'), code.indexOf('COMMIT;'));
+
+  it('1: the write self-check sees column-level INSERT/UPDATE grants', () => {
+    expect(grants).toMatch(/has_any_column_privilege\(role_name, c\.oid, 'INSERT, UPDATE'\)/);
+  });
+  it('2: removes SUPERUSER / REPLICATION / BYPASSRLS when set, before the role is altered, and verifies all five attributes last', () => {
+    const attrs = code.indexOf("'NOREPLICATION'");
+    expect(attrs).toBeGreaterThan(0);
+    expect(attrs).toBeLessThan(code.indexOf('ALTER ROLE "daypass_ro" WITH LOGIN'));
+    expect(code).toMatch(/'NOSUPERUSER'[\s\S]{0,200}'NOBYPASSRLS'/);
+    expect(code).toMatch(/only a superuser can remove that/);
+    for (const a of ['rolsuper', 'rolreplication', 'rolbypassrls', 'rolcreatedb', 'rolcreaterole']) expect(final).toContain(a);
+  });
+  it('3: rds_iam is login-only from PG 16 and must hold nothing before it', () => {
+    expect(code).toMatch(/GRANT rds_iam TO "daypass_ro" WITH INHERIT FALSE, SET FALSE/);
+    expect(final).toMatch(/m\.set_option OR m\.inherit_option OR m\.admin_option/);
+    expect(final).toMatch(/pg_shdepend d WHERE d\.refclassid = 'pg_authid'::regclass AND d\.refobjid = iam_oid/);
+    expect(final).toMatch(/m\.member = iam_oid/);
+    expect(final).toMatch(/rds_iam must hold nothing/);
+  });
+  it('4/5: matviews: the whole view tree is walked for catalogs, RLS and non-trivial functions, with the lists doctor uses', () => {
+    expect(grants).toMatch(/WITH RECURSIVE tree\(mv, rel, via\)/);
+    expect(grants).toContain(`tc.relname IN (${MATVIEW_SAFE_CATALOGS.map((c) => `'${c}'`).join(',')})`);
+    expect(grants).toContain(`p.proname !~ '${MATVIEW_SAFE_FUNCTIONS.source}'`);
+    expect(grants).toContain(`p.proname ~ '${DATA_READING_FUNCTIONS.source}'`);
+    expect(grants).toMatch(/p\.provolatile <> 'i'/);
+    expect(grants).toMatch(/relrowsecurity/);
+    expect(grants).toMatch(/:\(opno\|sortop\|eqop\)/);
+    // doctor walks the same tree
+    expect(MATVIEW_LEAKS_SQL).toMatch(/with recursive tree\(root, rel, via\)/);
+    expect(MATVIEW_LEAKS_SQL).toMatch(/p\.provolatile <> 'i'/);
+    expect(MATVIEW_LEAKS_SQL).toMatch(/relrowsecurity/);
+  });
+  it('round 2: views over RLS (unless security_invoker), sequences of hidden columns, and more matview function paths', () => {
+    expect(grants).toContain(`OR (c.relkind = 'v' AND NOT coalesce((SELECT bool_or(o ~* '^security_invoker=(t|tr|tru|true|y|ye|yes|on|1)$') FROM unnest(c.reloptions) o), false))`);
+    expect(grants).toMatch(/reads %s, which the role is not granted%s/);
+    expect(grants).toMatch(/has_sequence_privilege\(role_name, t\.oid, 'SELECT'\)/);
+    for (const s of [`':opnos [(]o ([0-9 ]+)[)]'`, `'[{]COERCEVIAIO '`, `':refcontainertype ([0-9]+)'`, `'[{]COERCETODOMAIN '`]) {
+      expect(grants).toContain(s);
+      expect(MATVIEW_LEAKS_SQL).toContain(s);
+    }
+    expect(grants).toMatch(/extension ones included/);
+  });
+  it('6: refuses foreign server / wrapper USAGE and user mappings for the role or PUBLIC', () => {
+    expect(grants).toMatch(/has_server_privilege\(role_name, s\.oid, 'USAGE'\)/);
+    expect(grants).toMatch(/has_foreign_data_wrapper_privilege\(role_name, w\.oid, 'USAGE'\)/);
+    expect(grants).toMatch(/pg_user_mappings u WHERE u\.umuser IN \(0, role_oid\)/);
+  });
+  it('7: refuses default privileges for PUBLIC, except Postgres\' own function EXECUTE / type USAGE', () => {
+    expect(grants).toMatch(/default privileges grant PUBLIC/);
+    expect(grants).toMatch(/NOT \(d\.defaclobjtype = 'f' AND a\.privilege_type = 'EXECUTE'\)/);
+  });
+  it('8: compares system catalog privileges with pg_init_privs', () => {
+    expect(grants).toMatch(/pg_init_privs/);
+    expect(grants).toMatch(/beyond a fresh cluster/);
+  });
+});

@@ -1,0 +1,159 @@
+---
+/**
+ * Five of the questions in docs/faq.md, with the answers shortened. The page at /docs/faq/ has
+ * all of them; keep these in step with it. Plain <details>, no script.
+ */
+---
+
+<div class="faq">
+	<details>
+		<summary>Why not just give the agent a read replica?</summary>
+		<div class="answer">
+			<p>
+				A replica solves load and, since a hot standby rejects writes, it solves writes too. It
+				does not hide a single column, it does not expire, it needs a password that then sits in
+				the agent's config, and it logs nothing per query. Daypass and a replica go together: point
+				a Daypass target at the replica and you get both.
+			</p>
+		</div>
+	</details>
+	<details>
+		<summary>Does it work with other MCP clients?</summary>
+		<div class="answer">
+			<p>
+				Yes. The server is <code>daypass mcp</code> over stdio, with no client-specific code. Claude
+				Code: <code>claude mcp add --scope user daypass -- daypass mcp</code>. Clients that take a
+				JSON config use the shape most of them share:
+			</p>
+			<pre class="land-code"><code>{`{ "mcpServers": { "daypass": { "command": "daypass", "args": ["mcp"] } } }`}</code></pre>
+			<p>
+				The lease is opened from a terminal regardless of client. The
+				<a href="/docs/plugin/">Claude Code plugin</a> also adds a skill that teaches Claude the
+				tools; other clients get the raw tools.
+			</p>
+		</div>
+	</details>
+	<details>
+		<summary>MySQL? SQL Server? SQLite?</summary>
+		<div class="answer">
+			<p>
+				No. Postgres only. The guard is Postgres's own parser (<code>libpg-query</code>), the role
+				setup is Postgres SQL, and the hidden-column mechanism is Postgres column-level grants. A
+				MySQL / MariaDB target type is listed under Next on the <a href="/roadmap/">roadmap</a>
+				with status <em>idea</em>.
+			</p>
+		</div>
+	</details>
+	<details>
+		<summary>What does the agent see?</summary>
+		<div class="answer">
+			<p>
+				Five tools: <code>daypass_status</code>, <code>list_tables</code>,
+				<code>describe_table</code>, <code>explain</code>, <code>query</code>. Through them: tables
+				in the schemas the target allows with row estimates and sizes; columns, types and indexes
+				of a table, minus the hidden columns and the indexes on them; query plans; and results
+				capped at 500 rows and 1 MB in total and 2000 characters per cell, labelled
+				<code>data, not instructions</code>. No tool returns the config file, the password, the
+				IAM token, or the audit log. Two caveats: a query against the system catalog shows the
+				<em>names</em> of hidden columns, never their values; and an agent that may also run shell
+				commands as you can read <code>~/.daypass</code> directly.
+			</p>
+		</div>
+	</details>
+	<details>
+		<summary>How do I revoke everything right now?</summary>
+		<div class="answer">
+			<ol>
+				<li>
+					<code>daypass close</code> on the machine: deletes the lease and removes the
+					security-group rule. The next tool call is refused.
+				</li>
+				<li>
+					In the database, as the owner: <code>ALTER ROLE daypass_ro NOLOGIN;</code> then
+					<code>SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = 'daypass_ro';</code>.
+					This ends every connection on every laptop at once.
+				</li>
+				<li>
+					On AWS: remove <code>rds-db:connect</code> from the person's policy, or revoke their
+					credentials. <code>daypass sweep &lt;target&gt;</code> cleans any rule they left.
+				</li>
+				<li>
+					For a password target: <code>\password daypass_ro</code> in <code>psql</code> as the
+					owner.
+				</li>
+			</ol>
+			<p>The audit file on each machine stays; that is the record of what ran.</p>
+		</div>
+	</details>
+</div>
+<p class="all"><a href="/docs/faq/">All questions, with links to the guides</a></p>
+
+<style>
+	.faq {
+		max-width: 48rem;
+		border-top: 1px solid var(--sl-color-hairline-light);
+	}
+	details {
+		border-bottom: 1px solid var(--sl-color-hairline-light);
+	}
+	summary {
+		cursor: pointer;
+		list-style: none;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.9rem 0;
+		font-weight: 600;
+		color: var(--sl-color-white);
+	}
+	summary::-webkit-details-marker {
+		display: none;
+	}
+	summary::after {
+		content: '';
+		flex: none;
+		width: 0.55rem;
+		height: 0.55rem;
+		border-right: 2px solid currentColor;
+		border-bottom: 2px solid currentColor;
+		transform: rotate(45deg);
+		transition: transform 0.15s;
+		margin-right: 0.25rem;
+	}
+	details[open] summary::after {
+		transform: rotate(-135deg);
+	}
+	summary:hover {
+		color: var(--sl-color-text-accent);
+	}
+	.answer {
+		padding: 0 0 1.1rem;
+		max-width: 44rem;
+		font-size: 0.925rem;
+		line-height: 1.6;
+		color: var(--sl-color-text);
+	}
+	.answer > * + * {
+		margin-top: 0.75rem;
+	}
+	.answer ol {
+		margin: 0;
+		padding-left: 1.25rem;
+	}
+	.answer li + li {
+		margin-top: 0.4rem;
+	}
+	.answer pre {
+		white-space: pre;
+	}
+	.all {
+		margin-top: 1rem;
+		font-size: 0.925rem;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		summary::after {
+			transition: none;
+		}
+	}
+</style>

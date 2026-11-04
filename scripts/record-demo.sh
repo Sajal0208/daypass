@@ -10,8 +10,9 @@
 # `secret` columns are hidden from the daypass_ro role, exposed as a target named "prod" (URL
 # form, password auth). Everything lives in a temp dir: an isolated DAYPASS_HOME, and a `daypass`
 # wrapper on PATH so the recording shows the bare command. Nothing from ~/.daypass is read. The
-# identity written to the lease is "dev@laptop" (USER from the environment; os.hostname() patched
-# by a preload shim) so no real user or machine name lands in the GIF. Re-runnable: it replaces the
+# identity written to the lease is "dev@laptop" (os.userInfo() and os.hostname() patched by a
+# preload shim; since 0.1.1 the identity is the OS account name, not USER) so no real user or
+# machine name lands in the GIF. Re-runnable: it replaces the
 # container, and the EXIT trap removes the container and the temp dir.
 #
 # Needs: docker, psql/pg_isready, node (dist built), and vhs (`brew install vhs`) unless --transcript.
@@ -74,12 +75,15 @@ node dist/cli/main.js sql --role daypass_ro --hide-file "$DEMO_DIR/hidden.txt" \
 psql "$OWNER_URL" -q -c "ALTER ROLE daypass_ro PASSWORD 'ro-pass';" >/dev/null
 
 RO_URL="$(node -e "const u=new URL(process.argv[1]);u.username='daypass_ro';u.password='ro-pass';u.searchParams.set('sslmode','disable');console.log(u.toString())" "$OWNER_URL")"
-node -e "require('fs').writeFileSync(process.env.DAYPASS_HOME+'/config.json', JSON.stringify({targets:{prod:{url:process.argv[1]}}}, null, 2))" "$RO_URL"
+node -e "require('fs').writeFileSync(process.env.DAYPASS_HOME+'/config.json', JSON.stringify({targets:{prod:{url:process.argv[1]}}}, null, 2), {mode: 0o600})" "$RO_URL"
 
 cat > "$DEMO_DIR/identity.cjs" <<'JS'
-// Preloaded into the CLI so the lease identity reads "dev@laptop" instead of a real machine name.
+// Preloaded into the CLI so the lease identity reads "dev@laptop" instead of a real user or machine
+// name (the identity is os.userInfo().username@os.hostname(); USER is not read).
 const os = require('node:os');
+const realUserInfo = os.userInfo;
 os.hostname = () => 'laptop';
+os.userInfo = (opts) => ({ ...realUserInfo.call(os, opts), username: 'dev' });
 require('node:module').syncBuiltinESMExports();
 JS
 cat > "$DEMO_DIR/bin/daypass" <<SH
@@ -100,7 +104,7 @@ if [ "$MODE" = transcript ]; then
   run 'daypass status'
   run 'daypass doctor prod'
   run 'DEMO=1 node scripts/smoke.mjs'
-  run 'daypass log -n 3'
+  run 'daypass log -n 4'
   run 'daypass close'
 else
   say "recording docs/assets/demo.tape"

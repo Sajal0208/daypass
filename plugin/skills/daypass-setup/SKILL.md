@@ -19,7 +19,7 @@ that touches production or AWS. Secrets never enter the chat.
   step 7: a lease is the admin's decision and the audit log records it under their identity.
   Print the line, the admin runs it and tells you when it is open.
 - Non-secret values the admin gave (hostname, instance id, region, account id, group id) may be
-  filled in. Where you do not know one, use the placeholders `my-db.abc123.eu-central-1.rds.amazonaws.com`,
+  filled in. Where you do not know one, use the placeholders `my-db.abc123.us-east-1.rds.amazonaws.com`,
   `123456789012`, `sg-xxxxxxxxxxxxxxxxx`, `db-XXXXXXXXXXXXXXXXXXXXXXXXXX`.
 
 ## 1. Which kind of database?
@@ -44,17 +44,17 @@ RDS form, (b). `region` is what switches a target to IAM auth. `awsProfile`, `se
 (per-lease IP rule), `schemas` (default `["public"]`) and `maxRows` (default 500) are optional:
 ```json
 { "targets": { "prod": {
-  "host": "my-db.abc123.eu-central-1.rds.amazonaws.com", "database": "app", "user": "daypass_ro",
-  "region": "eu-central-1", "awsProfile": "default", "securityGroupId": "sg-xxxxxxxxxxxxxxxxx" } } }
+  "host": "my-db.abc123.us-east-1.rds.amazonaws.com", "database": "app", "user": "daypass_ro",
+  "region": "us-east-1", "awsProfile": "default", "securityGroupId": "sg-xxxxxxxxxxxxxxxxx" } } }
 ```
 
 ## 3. Draft and review the hidden-columns list
 
-Glob for `**/schema.prisma`. If one exists:
-`daypass hidden suggest --prisma <path> > hidden-columns.txt`. Otherwise ask the admin to
-`export OWNER_URL='postgres://<owner>:...@host:5432/app'` in their terminal, then run
-`daypass hidden suggest --url "$OWNER_URL" > hidden-columns.txt`. (`--live <target>` also works
-once the target can log in.) Show the file. Explain:
+Glob for `**/schema.prisma`. If one exists, run
+`daypass hidden suggest --prisma "<path>"` and show the output. Otherwise ask the admin to
+`export OWNER_URL='postgres://<owner>:...@host:5432/app'` in their terminal, then have them run
+`daypass hidden suggest --url-env OWNER_URL` there and paste the output (it is column names only).
+(`--live <target>` also works once the target can log in.) Explain:
 
 - The heuristic matches column *names* only (`phone`, `email`, `token`, `secret`, `key`,
   `transcript`, `password`, `address`, `ssn`, `encrypted_*`, `account_number`, `tax_id`,
@@ -67,9 +67,12 @@ once the target can log in.) Show the file. Explain:
   so `hidden check` records the decision and stops flagging it. `daypass sql` ignores `!` lines.
 - Format: one `table.column` per line, `#` comments, camelCase accepted, `public` schema only.
 
-Write the reviewed list to `~/.daypass/hidden-columns.txt` yourself (it holds column names,
-nothing secret). The plugin's PII guard hook reads it from there (or from `DAYPASS_HIDDEN_FILE`). Suggest also committing a copy next to the
-migrations in the repo that owns the schema.
+Do not write `~/.daypass/hidden-columns.txt` yourself. Show the reviewed content, then the admin
+saves it there (for example `daypass hidden suggest ... > ~/.daypass/hidden-columns.txt` in their
+own terminal, then their edits) and tells you when it is in place. The plugin's PII guard hook reads
+it from there (or from `DAYPASS_HIDDEN_FILE`) and passes every column on a `!` line, which is why
+the human writes and approves each line, `!` lines above all. Suggest also committing a copy next
+to the migrations in the repo that owns the schema.
 
 ## 4. Create the read-only role
 
@@ -83,9 +86,11 @@ and it is safe to re-run. It ends with a self-check; success prints
 `self-check failed: daypass_ro can still read <table.column>`. Outside RDS the
 `NOTICE:  rds_iam role not found` line is expected. `--role NAME` renames the role.
 
-(a) only: the role is created with no password. The admin sets one in their own psql session,
-`ALTER ROLE daypass_ro PASSWORD '...'`, and puts that value into the target URL in
-`~/.daypass/config.json`. The password is never typed into this chat. Re-runs of the setup SQL
+(a) only: the role is created with no password. The admin sets one in their own psql session
+as the owner with `\password daypass_ro` (psql prompts for it and sends it hashed, so it stays
+out of shell history and the server log), and puts that value into the target URL in
+`~/.daypass/config.json` themselves. The password is never typed into this chat, and you never
+read or edit `config.json`. Re-runs of the setup SQL
 keep the password. (b): no password, ever; the script grants `rds_iam`.
 
 ## 5. RDS only: IAM auth and permissions
@@ -101,9 +106,9 @@ Each person who opens leases needs this policy, attached to their own user or ro
 ```json
 { "Version": "2012-10-17", "Statement": [
   { "Effect": "Allow", "Action": "rds-db:connect",
-    "Resource": "arn:aws:rds-db:eu-central-1:123456789012:dbuser:db-XXXXXXXXXXXXXXXXXXXXXXXXXX/daypass_ro" },
+    "Resource": "arn:aws:rds-db:us-east-1:123456789012:dbuser:db-XXXXXXXXXXXXXXXXXXXXXXXXXX/daypass_ro" },
   { "Effect": "Allow", "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupIngress"],
-    "Resource": "arn:aws:ec2:eu-central-1:123456789012:security-group/sg-xxxxxxxxxxxxxxxxx" },
+    "Resource": "arn:aws:ec2:us-east-1:123456789012:security-group/sg-xxxxxxxxxxxxxxxxx" },
   { "Effect": "Allow", "Action": "ec2:DescribeSecurityGroupRules", "Resource": "*" } ] }
 ```
 Warn: **remove any `0.0.0.0/0` inbound rule from that security group first**; a per-IP rule
@@ -112,7 +117,7 @@ useless; one identity per person.
 
 ## 6. Doctor
 
-Run `daypass doctor <target>` and read it top to bottom; later checks only run when earlier ones
+Run `daypass doctor "<target>"` and read it top to bottom; later checks only run when earlier ones
 pass, and every check from `db login` on needs a live lease (expected ✖ `lease` at this point,
 so the database checks are rerun in step 7). Map each ✖ to the heading of the same name in
 `docs/troubleshooting.md`:
@@ -143,10 +148,11 @@ count, then you close it." On a yes, print this line for the admin to run in the
 daypass open <target> --ttl 5m --reason "setup check"
 ```
 Then, with the lease open:
-1. `daypass doctor <target>`: every line should be ✔ now, including the database checks that
+1. `daypass doctor "<target>"`: every line should be ✔ now, including the database checks that
    needed the lease.
-2. `daypass hidden check --file ~/.daypass/hidden-columns.txt --live <target>`; exit 1 lists
-   columns missing from the schema or sensitive-but-not-hidden: fix the file, re-run step 4.
+2. `daypass hidden check --file ~/.daypass/hidden-columns.txt --live "<target>"`; exit 1 lists
+   columns missing from the schema or sensitive-but-not-hidden: propose the lines, the admin edits
+   the file and re-runs step 4.
 3. Through the MCP tools: `query` with `select <hidden column> from <table> limit 1`, expecting
    `Query failed after ... ms: permission denied for table <table>` (the plugin's PII guard lets
    this through because the column is in the hidden list; pick one that is); then `query` with

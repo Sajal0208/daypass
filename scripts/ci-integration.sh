@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# End-to-end check against a real Postgres. Used by CI; runs locally too:
-#   OWNER_URL=postgres://postgres:postgres@localhost:5432/postgres scripts/ci-integration.sh
+# End-to-end check against a real, THROWAWAY Postgres. Used by CI; runs locally too:
+#   DAYPASS_CI_OWNER_URL=postgres://postgres:postgres@localhost:5432/postgres scripts/ci-integration.sh
+#
+# It drops and recreates schemas, tables, roles and grants. It refuses any host but localhost,
+# 127.0.0.1 or ::1 unless DAYPASS_CI_ALLOW_REMOTE=1 (never point it at a database you care about).
+# The input is deliberately not OWNER_URL, which the setup docs have you export for a real database.
 #
 # 1. Create a table with a "secret" column, apply the generated role SQL hiding it.
 # 2. Open a lease, run `daypass doctor` (login, role settings, write blocked, hidden columns).
@@ -12,12 +16,30 @@
 # 6. Round 2: whole-row views, definer functions outside --schemas, child-only hidden columns,
 #    old default privileges, dropped schemas, views over unlisted schemas, per-database role
 #    settings and CREATE on a schema.
+# 7. Re-review 2026-11-02: views over row-level-security tables and over a hidden column's
+#    sequence, matview functions behind row comparisons, type I/O, subscripts and domain CHECKs,
+#    and doctor's warning about other databases.
 #
 # DAYPASS_CI_ROLE names the role (default daypass_ro); roles are cluster-wide, so use a unique
 # name on a shared server.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-: "${OWNER_URL:?set OWNER_URL to a postgres:// URL with owner rights}"
+: "${DAYPASS_CI_OWNER_URL:?set DAYPASS_CI_OWNER_URL to a postgres:// URL with owner rights on a throwaway local database}"
+# Every host the URL names (the authority and any host= / hostaddr= parameter) must be local.
+if [ "${DAYPASS_CI_ALLOW_REMOTE:-}" != 1 ]; then
+  node -e '
+    const raw = process.argv[1];
+    let u;
+    try { u = new URL(raw.replace(/^postgresql:/, "postgres:")); } catch { console.error("DAYPASS_CI_OWNER_URL is not a URL"); process.exit(1); }
+    const local = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+    const hosts = [u.hostname, ...u.searchParams.getAll("host"), ...u.searchParams.getAll("hostaddr")].flatMap((h) => h.split(","));
+    const bad = hosts.filter((h) => !local.has(h.toLowerCase()));
+    if (bad.length) {
+      console.error(`refusing to run: DAYPASS_CI_OWNER_URL names host ${bad.map((h) => JSON.stringify(h)).join(", ")}; this script drops schemas and tables. Use a throwaway local Postgres (localhost, 127.0.0.1, ::1), or set DAYPASS_CI_ALLOW_REMOTE=1 if the remote one is throwaway too.`);
+      process.exit(1);
+    }' "$DAYPASS_CI_OWNER_URL" || exit 1
+fi
+OWNER_URL="$DAYPASS_CI_OWNER_URL"
 
 export DAYPASS_HOME
 DAYPASS_HOME="$(mktemp -d)"
@@ -29,10 +51,20 @@ ROLE="${DAYPASS_CI_ROLE:-daypass_ro}"
 psql "$OWNER_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
 -- Postgres' default; an aborted earlier run of this script may have left it revoked.
 SELECT format('GRANT TEMP ON DATABASE %I TO PUBLIC', current_database()) \gexec
+-- ...and the grants the 2026-11-01 cases make (no-ops on a fresh database).
+REVOKE SELECT ON pg_catalog.pg_statistic FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION pg_catalog.pg_read_file(text) FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM PUBLIC;
+DROP SERVER IF EXISTS ci_pg CASCADE;
+DROP VIEW IF EXISTS v_over_mv, v_plain_stats, v_setting, v_nested_xml, v_xml CASCADE;
+DROP MATERIALIZED VIEW IF EXISTS mv_stats, mv_activity, mv_tables, mv_over_plain, mv_classes, mv_setting, mv_xml2, mv_clock, mv_rls CASCADE;
+DROP TABLE IF EXISTS rls_t CASCADE;
 DROP SCHEMA IF EXISTS analytics CASCADE;
 DROP SCHEMA IF EXISTS ci_util CASCADE;
 DROP TABLE IF EXISTS customers CASCADE;
-DROP TABLE IF EXISTS "Order-Items", measurements, parent_t, later_t, later2_t, ruled_t, audit_t, parent2, derived_t, pub_w, seq_t, parent_p CASCADE;
+DROP TABLE IF EXISTS "Order-Items", measurements, parent_t, later_t, later2_t, ruled_t, audit_t, parent2, derived_t, pub_w, seq_t, parent_p, rr_notes, rr_acct, rr_t, rr_ext CASCADE;
+DROP DOMAIN IF EXISTS rr_dom;
+DROP FUNCTION IF EXISTS rr_chk(text);
 DROP FUNCTION IF EXISTS public.secret_of(int) CASCADE;
 DROP FUNCTION IF EXISTS public.run_it(text);
 DROP VIEW IF EXISTS v_stat, v_auth, v_roles;
@@ -580,9 +612,293 @@ need "$DAYPASS_HOME/doctor-fns.out" "✔ functions.*runs SQL from a string: publ
 psql "$OWNER_URL" -q -c "DROP FUNCTION public.run_it(text);"
 echo "functions taking SQL text: reported (warning)"
 
+# ---- Review 2026-11-01 ---------------------------------------------------------------------
+# Each unsafe state: the setup refuses it (or, where it can, removes it) and doctor fails.
+PGVER="$(psql "$OWNER_URL" -tA -c 'show server_version_num')"
+doctor_fails() { # doctor_fails <outfile> <pattern>...: with a lease open, doctor must exit 1 and print every pattern
+  local out="$1" pat; shift
+  "${DAYPASS[@]}" open ci --no-network --reason "ci" --ttl 5m >/dev/null
+  if "${DAYPASS[@]}" doctor ci > "$out" 2>&1; then echo "FAIL: doctor should have failed ($out)"; cat "$out"; exit 1; fi
+  "${DAYPASS[@]}" close >/dev/null
+  for pat in "$@"; do need "$out" "$pat"; done
+}
+
+# 1: column-level INSERT/UPDATE grants (has_table_privilege does not see them).
+psql "$OWNER_URL" -q -c "GRANT UPDATE (name) ON customers TO PUBLIC; GRANT INSERT (id) ON ruled_t TO $ROLE;"
+doctor_fails "$DAYPASS_HOME/doctor-colw.out" "✖ write blocked.*public.customers" "✖ write blocked.*public.ruled_t"
+setup_fails "$DAYPASS_HOME/colw.err" "$DAYPASS_HOME/hidden.txt"
+need "$DAYPASS_HOME/colw.err" "INSERT/UPDATE on a column"
+need "$DAYPASS_HOME/colw.err" "public.customers"
+psql "$OWNER_URL" -q -c "REVOKE UPDATE (name) ON customers FROM PUBLIC;"
+setup_ok
+echo "column-level write grants: refused, doctor fails"
+
+# 2: REPLICATION / BYPASSRLS (a logical slot or a policy-free read reaches hidden data). A superuser
+# run removes them; a run that cannot is refused; doctor fails while they are set.
+psql "$OWNER_URL" -q -c "ALTER ROLE $ROLE REPLICATION BYPASSRLS;"
+doctor_fails "$DAYPASS_HOME/doctor-attrs.out" "✖ write blocked.*REPLICATION, BYPASSRLS"
+setup_ok
+[ "$(psql "$OWNER_URL" -tA -c "select rolreplication or rolbypassrls or rolsuper or rolcreatedb or rolcreaterole from pg_roles where rolname = '$ROLE'")" = f ] \
+  || { echo "FAIL: a re-run must remove REPLICATION and BYPASSRLS"; exit 1; }
+psql "$OWNER_URL" -q -c "DROP ROLE IF EXISTS ${ROLE}_adm; CREATE ROLE ${ROLE}_adm LOGIN CREATEROLE CREATEDB PASSWORD 'adm-pass'; ALTER ROLE $ROLE REPLICATION;"
+if [ "$PGVER" -ge 160000 ]; then psql "$OWNER_URL" -q -c "GRANT $ROLE TO ${ROLE}_adm WITH ADMIN OPTION;"; fi
+ADM_URL="$(node -e "const u=new URL(process.argv[1]);u.username='${ROLE}_adm';u.password='adm-pass';console.log(u.toString())" "$OWNER_URL")"
+if "${DAYPASS[@]}" "${SQLARGS[@]}" --hide-file "$DAYPASS_HOME/hidden.txt" | psql "$ADM_URL" -v ON_ERROR_STOP=1 -q 2>"$DAYPASS_HOME/attrs.err" >/dev/null; then
+  echo "FAIL: a non-superuser run must refuse a role with REPLICATION"; exit 1
+fi
+need "$DAYPASS_HOME/attrs.err" "has REPLICATION, and only a superuser can remove that"
+psql "$OWNER_URL" -q -c "DROP ROLE ${ROLE}_adm;"
+setup_ok
+echo "REPLICATION / BYPASSRLS: removed by a superuser run, refused otherwise, doctor fails"
+
+# 3: rds_iam. IAM login needs the membership only. PG 16+: granted WITH INHERIT FALSE, SET FALSE
+# (and narrowed back on a re-run); before 16 SET ROLE rds_iam always works, so rds_iam must hold nothing.
+IAM_CREATED=0
+if [ "$(psql "$OWNER_URL" -tA -c "select count(*) from pg_roles where rolname = 'rds_iam'")" = 0 ]; then
+  psql "$OWNER_URL" -q -c "CREATE ROLE rds_iam NOLOGIN;"; IAM_CREATED=1
+fi
+setup_ok
+[ "$(psql "$OWNER_URL" -tA -c "select pg_has_role('$ROLE', 'rds_iam', 'MEMBER')")" = t ] || { echo "FAIL: setup should grant rds_iam"; exit 1; }
+iam_opts() { psql "$OWNER_URL" -tA -c "select string_agg(set_option::text || '/' || inherit_option::text || '/' || admin_option::text, ',') from pg_auth_members where roleid = 'rds_iam'::regrole and member = '$ROLE'::regrole"; }
+if [ "$PGVER" -ge 160000 ]; then
+  [ "$(iam_opts)" = false/false/false ] || { echo "FAIL: rds_iam must be granted WITH INHERIT FALSE, SET FALSE (got $(iam_opts))"; exit 1; }
+  grep -q 'permission denied' <<<"$(ro "set role rds_iam")" || { echo "FAIL: the role must not SET ROLE rds_iam"; exit 1; }
+  psql "$OWNER_URL" -q -c "GRANT rds_iam TO $ROLE WITH SET TRUE;"
+  doctor_fails "$DAYPASS_HOME/doctor-iam.out" "✖ rds_iam.*with SET"
+  setup_ok
+  [ "$(iam_opts)" = false/false/false ] || { echo "FAIL: a re-run must narrow rds_iam back (got $(iam_opts))"; exit 1; }
+  psql "$OWNER_URL" -q -c "GRANT rds_iam TO $ROLE WITH ADMIN OPTION;"
+  doctor_fails "$DAYPASS_HOME/doctor-iam2.out" "✖ rds_iam.*ADMIN"
+  setup_fails "$DAYPASS_HOME/iam.err" "$DAYPASS_HOME/hidden.txt"
+  need "$DAYPASS_HOME/iam.err" "can use the privileges of rds_iam"
+  psql "$OWNER_URL" -q -c "REVOKE ADMIN OPTION FOR rds_iam FROM $ROLE;"
+  # What rds_iam holds is out of reach, so it does not stop the setup.
+  psql "$OWNER_URL" -q -c "GRANT SELECT ON customers TO rds_iam;"
+  setup_ok
+  psql "$OWNER_URL" -q -c "REVOKE SELECT ON customers FROM rds_iam;"
+else
+  psql "$OWNER_URL" -q -c "GRANT SELECT ON customers TO rds_iam;"
+  grep -q 'hunter2' <<<"$(psql "$RO_URL" -tA -c "set role rds_iam" -c "select secret from customers" 2>&1)" \
+    || { echo "FAIL: expected SET ROLE rds_iam to reach rds_iam's grants before PG 16"; exit 1; }
+  doctor_fails "$DAYPASS_HOME/doctor-iam.out" "✖ rds_iam.*rds_iam is named in the privileges of table public.customers"
+  setup_fails "$DAYPASS_HOME/iam.err" "$DAYPASS_HOME/hidden.txt"
+  need "$DAYPASS_HOME/iam.err" "rds_iam must hold nothing"
+  need "$DAYPASS_HOME/iam.err" "table public.customers"
+  psql "$OWNER_URL" -q -c "REVOKE SELECT ON customers FROM rds_iam; CREATE ROLE ${ROLE}_grp NOLOGIN; GRANT ${ROLE}_grp TO rds_iam;"
+  setup_fails "$DAYPASS_HOME/iam2.err" "$DAYPASS_HOME/hidden.txt"
+  need "$DAYPASS_HOME/iam2.err" "is a member of ${ROLE}_grp"
+  psql "$OWNER_URL" -q -c "DROP ROLE ${ROLE}_grp;"
+fi
+setup_ok
+psql "$OWNER_URL" -q -c "REVOKE rds_iam FROM $ROLE;"
+if [ "$IAM_CREATED" = 1 ]; then psql "$OWNER_URL" -q -c "DROP ROLE rds_iam;"; fi
+echo "rds_iam: login-only membership (PG 16+) / must hold nothing (before 16); doctor fails otherwise"
+
+# 4 + 5: a materialized view stores what its OWNER saw at refresh: catalogs that filter by caller
+# (pg_stats, pg_stat_activity, information_schema), functions (in it or in any view it reads,
+# however deep) and row-level security. Withheld; plain views over the same are fine (they run
+# as the caller); clock / formatting built-ins and plain catalog tables are fine.
+psql "$OWNER_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
+ANALYZE customers;
+CREATE MATERIALIZED VIEW mv_stats AS SELECT tablename, attname, most_common_vals::text AS mcv FROM pg_stats WHERE schemaname = 'public';
+CREATE MATERIALIZED VIEW mv_activity AS SELECT pid, query FROM pg_stat_activity;
+CREATE MATERIALIZED VIEW mv_tables AS SELECT table_name FROM information_schema.tables;
+CREATE VIEW v_plain_stats AS SELECT tablename, attname, most_common_vals::text AS mcv FROM pg_stats WHERE schemaname = 'public';
+CREATE MATERIALIZED VIEW mv_over_plain AS SELECT * FROM v_plain_stats;
+CREATE VIEW v_over_mv AS SELECT * FROM mv_stats;
+CREATE MATERIALIZED VIEW mv_classes AS SELECT relname FROM pg_class WHERE relname = 'customers';
+CREATE VIEW v_setting AS SELECT current_setting('application_name') AS s;
+CREATE VIEW v_xml AS SELECT query_to_xml('select secret from public.customers', true, false, '') AS x;
+CREATE VIEW v_nested_xml AS SELECT x FROM v_xml;
+CREATE MATERIALIZED VIEW mv_setting AS SELECT s FROM v_setting;
+CREATE MATERIALIZED VIEW mv_xml2 AS SELECT x FROM v_nested_xml;
+CREATE MATERIALIZED VIEW mv_clock AS SELECT id, upper(name) || '!' AS n, now() AS at, date_trunc('day', now()) AS d, format('%s', id) AS f
+  FROM customers WHERE now() > now() - interval '1 day' ORDER BY name;
+CREATE TABLE rls_t (id int, who text);
+INSERT INTO rls_t VALUES (1, 'someone-else');
+ALTER TABLE rls_t ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rls_own ON rls_t USING (who = current_user);
+CREATE MATERIALIZED VIEW mv_rls AS SELECT id, who FROM rls_t;
+SQL
+setup_ok "$DAYPASS_HOME/hidden.txt" "$DAYPASS_HOME/mvcat.err"
+need "$DAYPASS_HOME/mvcat.err" "view public.mv_stats reads pg_catalog.pg_stats"
+need "$DAYPASS_HOME/mvcat.err" "view public.mv_activity reads pg_catalog.pg_stat_activity"
+need "$DAYPASS_HOME/mvcat.err" "view public.mv_tables reads information_schema.tables"
+need "$DAYPASS_HOME/mvcat.err" "view public.mv_over_plain reads pg_catalog.pg_stats through view public.v_plain_stats"
+need "$DAYPASS_HOME/mvcat.err" "view public.v_over_mv reads pg_catalog.pg_stats .* through view public.mv_stats"
+need "$DAYPASS_HOME/mvcat.err" "view public.mv_setting calls function pg_catalog.current_setting(text) through view public.v_setting"
+need "$DAYPASS_HOME/mvcat.err" "view public.mv_xml2 calls function pg_catalog.query_to_xml(.*through view public.v_xml"
+need "$DAYPASS_HOME/mvcat.err" "view public.mv_rls reads public.rls_t, which has row-level security"
+for v in mv_stats mv_activity mv_tables mv_over_plain v_over_mv mv_setting mv_xml2 mv_rls; do
+  if grep -q "view public.$v .*not granted" "$DAYPASS_HOME/mvcat.err"; then :; else echo "FAIL: $v should be withheld"; cat "$DAYPASS_HOME/mvcat.err"; exit 1; fi
+done
+denied "select mcv from mv_stats"
+denied "select query from mv_activity"
+denied "select mcv from mv_over_plain"
+denied "select mcv from v_over_mv"
+denied "select s from mv_setting"
+denied "select x from mv_xml2"
+denied "select who from mv_rls"
+allowed "select n from mv_clock" 'ADA!'
+allowed "select relname from mv_classes" customers
+allowed "select attname from v_plain_stats where tablename = 'customers' and attname = 'name'" name
+allowed "select s from v_setting" psql
+# Granted by someone else (PUBLIC here): the setup refuses, doctor fails.
+psql "$OWNER_URL" -q -c "GRANT SELECT ON mv_stats, mv_xml2, v_over_mv TO PUBLIC;"
+doctor_fails "$DAYPASS_HOME/doctor-mv.out" "✖ materialized views.*public.mv_stats reads pg_catalog.pg_stats" "✖ materialized views.*public.mv_xml2 calls function pg_catalog.query_to_xml" \
+  "✖ materialized views.*public.v_over_mv (over materialized view public.mv_stats"
+setup_fails "$DAYPASS_HOME/mv.err" "$DAYPASS_HOME/hidden.txt"
+need "$DAYPASS_HOME/mv.err" "can read public.mv_"
+psql "$OWNER_URL" -q -c "DROP VIEW v_over_mv; DROP MATERIALIZED VIEW mv_stats, mv_activity, mv_tables, mv_over_plain, mv_classes, mv_setting, mv_xml2, mv_clock, mv_rls; DROP VIEW v_plain_stats, v_setting, v_nested_xml, v_xml; DROP TABLE rls_t;"
+setup_ok
+echo "materialized views over caller-filtered catalogs, functions in views below them, RLS tables: withheld; doctor fails"
+
+# 6: foreign servers (dblink / postgres_fdw log in with the mapping's stored credentials).
+if [ "$(psql "$OWNER_URL" -tA -c "select count(*) from pg_extension where extname = 'postgres_fdw'")" = 0 ] \
+   && psql "$OWNER_URL" -q -c "CREATE EXTENSION postgres_fdw;" 2>/dev/null; then
+  psql "$OWNER_URL" -q -c "CREATE SERVER ci_pg FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host 'localhost', dbname 'postgres'); GRANT USAGE ON FOREIGN SERVER ci_pg TO PUBLIC;"
+  doctor_fails "$DAYPASS_HOME/doctor-fs.out" "✖ foreign servers.*USAGE on server ci_pg"
+  setup_fails "$DAYPASS_HOME/fs.err" "$DAYPASS_HOME/hidden.txt"
+  need "$DAYPASS_HOME/fs.err" "USAGE on foreign server ci_pg"
+  psql "$OWNER_URL" -q -c "REVOKE USAGE ON FOREIGN SERVER ci_pg FROM PUBLIC; CREATE USER MAPPING FOR PUBLIC SERVER ci_pg OPTIONS (user 'postgres', password 'unused');"
+  doctor_fails "$DAYPASS_HOME/doctor-fs2.out" "✖ foreign servers.*user mapping for PUBLIC on server ci_pg"
+  setup_fails "$DAYPASS_HOME/fs2.err" "$DAYPASS_HOME/hidden.txt"
+  need "$DAYPASS_HOME/fs2.err" "user mapping for PUBLIC on server ci_pg"
+  psql "$OWNER_URL" -q -c "DROP USER MAPPING FOR PUBLIC SERVER ci_pg; GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO PUBLIC;"
+  setup_fails "$DAYPASS_HOME/fs3.err" "$DAYPASS_HOME/hidden.txt"
+  need "$DAYPASS_HOME/fs3.err" "USAGE on foreign-data wrapper postgres_fdw"
+  psql "$OWNER_URL" -q -c "DROP SERVER ci_pg CASCADE; DROP EXTENSION postgres_fdw;"
+  setup_ok
+  echo "foreign servers: USAGE and user mappings for PUBLIC refused; doctor fails"
+else
+  echo "SKIP: postgres_fdw not available (or already installed), foreign-server case not run"
+fi
+
+# 7: default privileges for PUBLIC make every new table readable before anyone reviews it.
+psql "$OWNER_URL" -q -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO PUBLIC;"
+doctor_fails "$DAYPASS_HOME/doctor-dacl.out" "✖ default privileges.*SELECT on new tables in schema public for PUBLIC"
+setup_fails "$DAYPASS_HOME/dacl.err" "$DAYPASS_HOME/hidden.txt"
+need "$DAYPASS_HOME/dacl.err" "default privileges grant PUBLIC"
+psql "$OWNER_URL" -q -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT ON TABLES FROM PUBLIC;"
+# A default grant to another role keeps Postgres' own EXECUTE-to-PUBLIC in the entry: not flagged.
+psql "$OWNER_URL" -q -c "DROP ROLE IF EXISTS ${ROLE}_app3; CREATE ROLE ${ROLE}_app3 NOLOGIN; ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO ${ROLE}_app3;"
+setup_ok
+psql "$OWNER_URL" -q -c "ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM ${ROLE}_app3; DROP ROLE ${ROLE}_app3;"
+echo "default privileges for PUBLIC: refused; doctor fails"
+
+# 8: grants on system catalogs beyond a fresh cluster's (pg_init_privs).
+psql "$OWNER_URL" -q -c "GRANT SELECT ON pg_catalog.pg_statistic TO PUBLIC; GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_file(text) TO PUBLIC; GRANT SELECT ON information_schema.tables TO $ROLE;"
+doctor_fails "$DAYPASS_HOME/doctor-catg.out" "✖ catalog grants.*SELECT on pg_catalog.pg_statistic to PUBLIC" "✖ catalog grants.*EXECUTE on function pg_read_file(text) to PUBLIC" \
+  "✖ catalog grants.*SELECT on information_schema.tables to $ROLE"
+setup_fails "$DAYPASS_HOME/catg.err" "$DAYPASS_HOME/hidden.txt"
+need "$DAYPASS_HOME/catg.err" "SELECT on pg_catalog.pg_statistic to PUBLIC"
+need "$DAYPASS_HOME/catg.err" "EXECUTE on function pg_read_file(text) to PUBLIC"
+psql "$OWNER_URL" -q -c "REVOKE SELECT ON pg_catalog.pg_statistic FROM PUBLIC; REVOKE EXECUTE ON FUNCTION pg_catalog.pg_read_file(text) FROM PUBLIC; REVOKE SELECT ON information_schema.tables FROM $ROLE;"
+setup_ok
+echo "system catalog grants beyond a fresh cluster: refused; doctor fails"
+
+# ---- Re-review 2026-11-02 -------------------------------------------------------------------
+# R1: a plain view reads its tables with its OWNER's rights, row-level security included; only a
+# security_invoker view (PG 15+) reads them as the caller. R2: a view over a sequence owned by a
+# hidden column reads it as the owner. Both are withheld; doctor fails when someone grants them.
+psql "$OWNER_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
+CREATE TABLE rr_notes (id int, tenant text, body text);
+INSERT INTO rr_notes VALUES (1, 'other-tenant', 'tenant-secret');
+ALTER TABLE rr_notes ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rr_own ON rr_notes USING (tenant = current_user);
+CREATE VIEW rr_notes_v AS SELECT id, body FROM rr_notes;
+CREATE VIEW rr_notes_nested AS SELECT id FROM rr_notes_v;
+CREATE TABLE rr_acct (id serial primary key, api_key_id bigserial, name text);
+INSERT INTO rr_acct (name) VALUES ('a'), ('b');
+CREATE VIEW rr_key_counter AS SELECT last_value FROM rr_acct_api_key_id_seq;
+CREATE VIEW rr_id_counter AS SELECT last_value FROM rr_acct_id_seq;
+SQL
+if [ "$PGVER" -ge 150000 ]; then
+  psql "$OWNER_URL" -v ON_ERROR_STOP=1 -q -c "CREATE VIEW rr_notes_inv WITH (security_invoker) AS SELECT id, body FROM rr_notes; CREATE VIEW rr_over_inv AS SELECT id FROM rr_notes_inv;"
+fi
+{ cat "$DAYPASS_HOME/hidden.txt"; echo 'rr_acct.api_key_id'; } > "$DAYPASS_HOME/hidden-rr.txt"
+setup_ok "$DAYPASS_HOME/hidden-rr.txt" "$DAYPASS_HOME/rr.err"
+need "$DAYPASS_HOME/rr.err" "view public.rr_notes_v reads public.rr_notes, which has row-level security (a view reads its tables with its owner's rights"
+need "$DAYPASS_HOME/rr.err" "view public.rr_key_counter reads public.rr_acct_api_key_id_seq, which the role is not granted (a sequence owned by a hidden column)"
+denied "select body from rr_notes_v"
+denied "select id from rr_notes_nested"
+denied "select last_value from rr_key_counter"
+allowed "select last_value from rr_id_counter" 2
+if [ "$PGVER" -ge 150000 ]; then
+  [ "$(ro "select count(*) from rr_notes_inv")" = 0 ] || { echo "FAIL: a security_invoker view must be granted and show only the role's rows"; exit 1; }
+  denied "select id from rr_over_inv"
+fi
+"${DAYPASS[@]}" hidden check --file "$DAYPASS_HOME/hidden-rr.txt" --url "$OWNER_NOSSL_URL" --schemas public,analytics > "$DAYPASS_HOME/rr-check.out" 2>&1 || true
+need "$DAYPASS_HOME/rr-check.out" "view rr_notes_v reads public.rr_notes, which has row-level security"
+need "$DAYPASS_HOME/rr-check.out" "view rr_key_counter reads rr_acct_api_key_id_seq, a sequence owned by a hidden column"
+psql "$OWNER_URL" -q -c "GRANT SELECT ON rr_notes_v, rr_key_counter TO PUBLIC;"
+doctor_fails "$DAYPASS_HOME/doctor-rr.out" "✖ views as owner.*public.rr_notes_v reads public.rr_notes, which has row-level security" \
+  "✖ views as owner.*public.rr_key_counter reads public.rr_acct_api_key_id_seq, which the role cannot read"
+setup_fails "$DAYPASS_HOME/rr2.err" "$DAYPASS_HOME/hidden-rr.txt"
+need "$DAYPASS_HOME/rr2.err" "can read public.rr_"
+psql "$OWNER_URL" -q -c "DROP VIEW IF EXISTS rr_over_inv, rr_notes_inv; DROP VIEW rr_notes_nested, rr_notes_v, rr_key_counter, rr_id_counter; DROP TABLE rr_notes, rr_acct;"
+setup_ok
+echo "views over row-level security and over a hidden column's sequence: withheld; doctor fails"
+
+# R7: matview functions reached through a row comparison, a conversion through text (type I/O),
+# a subscript handler and a domain CHECK ran as the owner at refresh: withheld. (citext / hstore
+# are extensions: their functions are outside pg_catalog, so such matviews are withheld too.)
+psql "$OWNER_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
+CREATE FUNCTION rr_chk(text) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT length($1) < 50 $$;
+CREATE DOMAIN rr_dom AS text CHECK (rr_chk(VALUE));
+CREATE TABLE rr_t (id int, d text);
+INSERT INTO rr_t VALUES (1, 'x');
+CREATE MATERIALIZED VIEW rr_mv_dom AS SELECT d::rr_dom AS d FROM rr_t;
+CREATE MATERIALIZED VIEW rr_mv_plain AS SELECT id, d FROM rr_t;
+SQL
+EXT=0
+if [ "$(psql "$OWNER_URL" -tA -c "select count(*) from pg_extension where extname in ('citext', 'hstore')")" = 0 ] \
+   && psql "$OWNER_URL" -q -c "CREATE EXTENSION citext; CREATE EXTENSION hstore;" 2>/dev/null; then
+  EXT=1
+  psql "$OWNER_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
+CREATE TABLE rr_ext (id int, e citext, n citext, h hstore);
+INSERT INTO rr_ext VALUES (1, 'A', '5', 'a=>1');
+CREATE MATERIALIZED VIEW rr_mv_rowcmp AS SELECT id FROM rr_ext WHERE (e, e) < ('b'::citext, 'b'::citext);
+CREATE MATERIALIZED VIEW rr_mv_io AS SELECT n::int AS n FROM rr_ext;
+CREATE MATERIALIZED VIEW rr_mv_ext_plain AS SELECT id, e FROM rr_ext;
+SQL
+  if [ "$PGVER" -ge 140000 ]; then psql "$OWNER_URL" -v ON_ERROR_STOP=1 -q -c "CREATE MATERIALIZED VIEW rr_mv_sub AS SELECT h['a'] AS a FROM rr_ext;"; fi
+fi
+setup_ok "$DAYPASS_HOME/hidden.txt" "$DAYPASS_HOME/rr7.err"
+need "$DAYPASS_HOME/rr7.err" "view public.rr_mv_dom calls function public.rr_chk(text)"
+need "$DAYPASS_HOME/rr7.err" "extension ones included"
+denied "select d from rr_mv_dom"
+allowed "select d from rr_mv_plain" x
+if [ "$EXT" = 1 ]; then
+  need "$DAYPASS_HOME/rr7.err" "view public.rr_mv_rowcmp calls function public.citext_lt"
+  need "$DAYPASS_HOME/rr7.err" "view public.rr_mv_io converts values through text with type public.citext"
+  denied "select id from rr_mv_rowcmp"
+  denied "select n from rr_mv_io"
+  allowed "select e from rr_mv_ext_plain" A
+  if [ "$PGVER" -ge 140000 ]; then
+    need "$DAYPASS_HOME/rr7.err" "view public.rr_mv_sub subscripts type public.hstore"
+    denied "select a from rr_mv_sub"
+  fi
+  psql "$OWNER_URL" -q -c "DROP TABLE rr_ext CASCADE; DROP EXTENSION hstore; DROP EXTENSION citext;"
+else
+  echo "SKIP: citext / hstore not available (or already installed), row-comparison / text-conversion / subscript cases not run"
+fi
+psql "$OWNER_URL" -q -c "DROP TABLE rr_t CASCADE; DROP DOMAIN rr_dom; DROP FUNCTION rr_chk(text);"
+echo "matviews: row comparisons, type I/O, subscripts and domain CHECKs followed"
+
+# R8: PUBLIC holds CONNECT on every database; doctor warns (never fails) and names the others.
+psql "$OWNER_URL" -q -c "DROP DATABASE IF EXISTS ${ROLE}_sibling;" -c "CREATE DATABASE ${ROLE}_sibling;"
+"${DAYPASS[@]}" open ci --no-network --reason "ci" --ttl 5m >/dev/null
+"${DAYPASS[@]}" doctor ci > "$DAYPASS_HOME/doctor-sib.out" 2>&1 || true
+"${DAYPASS[@]}" close >/dev/null
+need "$DAYPASS_HOME/doctor-sib.out" "✔ other databases  warning: can connect to .*${ROLE}_sibling"
+psql "$OWNER_URL" -q -c "DROP DATABASE ${ROLE}_sibling;"
+echo "other databases: doctor warns"
+
 "${DAYPASS[@]}" open ci --no-network --reason "ci" --ttl 5m
 "${DAYPASS[@]}" doctor ci | tee "$DAYPASS_HOME/doctor.out"
-for want in '✔ role settings' '✔ write blocked' '✔ other schemas' '✔ hidden columns   7 listed' '✔ definer functions'; do
+for want in '✔ role settings' '✔ write blocked' '✔ other schemas' '✔ hidden columns   7 listed' '✔ definer functions' \
+            '✔ foreign servers' '✔ default privileges' '✔ catalog grants' '✔ materialized views' '✔ views as owner' '✔ other databases'; do
   grep -q "$want" "$DAYPASS_HOME/doctor.out" || { echo "FAIL: doctor should print '$want'"; exit 1; }
 done
 # pg_catalog lists hidden columns regardless of grants, so the read-only role sees the same picture.
@@ -595,7 +911,9 @@ psql "$OWNER_URL" -q <<'SQL'
 DROP SCHEMA IF EXISTS analytics CASCADE;
 DROP SCHEMA IF EXISTS ci_util CASCADE;
 DROP TABLE IF EXISTS customers CASCADE;
-DROP TABLE IF EXISTS "Order-Items", measurements, parent_t, later_t, later2_t, ruled_t, audit_t, parent2, derived_t, pub_w, seq_t, parent_p CASCADE;
+DROP TABLE IF EXISTS "Order-Items", measurements, parent_t, later_t, later2_t, ruled_t, audit_t, parent2, derived_t, pub_w, seq_t, parent_p, rr_notes, rr_acct, rr_t, rr_ext CASCADE;
+DROP DOMAIN IF EXISTS rr_dom;
+DROP FUNCTION IF EXISTS rr_chk(text);
 DROP FUNCTION IF EXISTS public.secret_of(int) CASCADE;
 DROP FUNCTION IF EXISTS public.run_it(text);
 DROP VIEW IF EXISTS v_stat, v_auth, v_roles;

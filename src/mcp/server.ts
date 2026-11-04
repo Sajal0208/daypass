@@ -1,12 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { readFileSync } from 'node:fs';
+import { sha256Hex } from '../core/audit.js';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { checkSql, MAX_SQL_BYTES, wrapWithBudget, shapeBudgetRows, shapeRows, isLeaseLive, shouldReleaseNetwork } from '../core/index.js';
 import type { Lease, GuardResult, AuditEvent } from '../core/index.js';
 import { readConfig, readLease, writeLease, appendAudit, resolveTarget } from './state.js';
-import { revokeRule } from './sg.js';
+import { revokeLeaseRule } from './sg.js';
 import type { ResolvedTarget } from './state.js';
 import { getPool, shutdownPool, resetShutdownForTests as resetPoolShutdown, runBounded, cancelAndDestroy, STATEMENT_TIMEOUT_MS } from './db.js';
 
@@ -65,30 +66,51 @@ const STOPPING = 'Daypass is stopping; the query was not run.';
 
 /** Audit at most this much of a refused statement that is over the size cap. */
 const AUDIT_SQL_PREFIX = 2000;
-const auditSql = (sql: string) => {
+const auditSql = (sql: string): { sql: string; sqlSha256?: string } => {
   const bytes = Buffer.byteLength(sql, 'utf8');
-  return bytes > MAX_SQL_BYTES ? `${sql.slice(0, AUDIT_SQL_PREFIX)}…[${bytes} bytes in total; the rest is not audited]` : sql;
+  return bytes > MAX_SQL_BYTES
+    ? { sql: `${sql.slice(0, AUDIT_SQL_PREFIX)}…[${bytes} bytes in total; the rest is not audited]`, sqlSha256: sha256Hex(sql) }
+    : { sql };
 };
+
+/** How long a tool call waits for the expired-lease revoke below; the AWS calls have no timeout of their own. */
+const NETWORK_RELEASE_WAIT_MS = 10_000;
+let networkReleaseWaitMs = NETWORK_RELEASE_WAIT_MS;
+/** Tests only: shorten the wait (undefined restores it). */
+export function setNetworkReleaseWaitForTests(ms: number | undefined): void {
+  networkReleaseWaitMs = ms ?? NETWORK_RELEASE_WAIT_MS;
+}
 
 /**
  * An expired lease may still hold a security-group rule (nobody ran `daypass close`).
- * Revoke it on sight; `daypass sweep` from cron is the backstop if this fails.
+ * Revoke it on sight; `daypass sweep` from cron is the backstop if this fails. A slow AWS
+ * answer does not hold up the call: past the wait the revoke finishes in the background.
  */
-async function releaseExpiredNetwork(lease: Lease): Promise<void> {
+function releaseExpiredNetwork(lease: Lease): Promise<void> {
+  return Promise.race([revokeExpired(lease), new Promise<void>((r) => setTimeout(r, networkReleaseWaitMs).unref())]);
+}
+
+async function revokeExpired(lease: Lease): Promise<void> {
   try {
-    const t = (await readConfig()).targets[lease.target];
-    if (t?.region && t.securityGroupId && lease.sgRuleId) {
-      await revokeRule({ region: t.region, profile: t.awsProfile, groupId: t.securityGroupId, ruleId: lease.sgRuleId });
-    }
+    const t = (await readConfig().catch(() => undefined))?.targets[lease.target];
+    const r = await revokeLeaseRule(lease, t);
+    if (!r.revoked) return;
     const { sgRuleId: _dropped, ...rest } = lease;
-    await writeLease(rest);
+    // Only if the lease on disk is still this one: `daypass open` may have written a new lease
+    // while the revoke was in flight.
+    await writeLease(rest, { ifId: lease.id });
   } catch {
     /* sweep cron will catch it */
   }
 }
 
 async function ctx(): Promise<Ctx | string> {
-  const lease = await readLease();
+  let lease: Lease | null;
+  try {
+    lease = await readLease();
+  } catch (e) {
+    return errorMessage(e);
+  }
   if (shouldReleaseNetwork(lease)) await releaseExpiredNetwork(lease!);
   if (!lease || !isLeaseLive(lease)) {
     return lease
@@ -113,6 +135,18 @@ function errorMessage(e: any): string {
   return e?.code ?? String(e);
 }
 
+/** Error text returned to the agent and written to the audit is cut here (a database error can echo megabytes of input). */
+export const MAX_ERROR_CHARS = 2000;
+
+/** `s` cut to `max` characters (never inside a surrogate pair) with a note of how much was dropped. */
+export function capText(s: string, max: number): string {
+  if (s.length <= max) return s;
+  let k = max;
+  const c = s.charCodeAt(k - 1);
+  if (c >= 0xd800 && c <= 0xdbff) k--;
+  return `${s.slice(0, k)}…[+${s.length - k} chars]`;
+}
+
 const text = (s: string) => ({ content: [{ type: 'text' as const, text: s }] });
 const fail = (s: string) => ({ content: [{ type: 'text' as const, text: s }], isError: true });
 
@@ -125,7 +159,7 @@ function auditBase(tool: string, sql: string, c: Ctx) {
     target: c.targetName,
     reason: c.lease.reason,
     tool,
-    sql: auditSql(sql),
+    ...auditSql(sql),
   };
 }
 
@@ -149,7 +183,7 @@ async function guardSafely(sql: string): Promise<GuardResult> {
  * `budget` pushes the row cap and the byte budget into SQL (the `query` tool); the plain
  * path (catalog tools, EXPLAIN) still shapes in Node but is protected by the wire cap.
  */
-async function runGuarded(tool: string, sql: string, c: Ctx, budget: boolean) {
+async function runGuarded(tool: string, sql: string, c: Ctx, budget: boolean, onEmpty?: string) {
   if (stopping) return fail(STOPPING);
   const guard = await guardSafely(sql);
   if (!guard.ok) return refuse(tool, sql, c, guard.reason);
@@ -161,7 +195,7 @@ async function runGuarded(tool: string, sql: string, c: Ctx, budget: boolean) {
     maxBytes: c.target.maxBytes ?? DEFAULTS.maxBytes,
   };
   const useBudget = budget && guard.kind === 'select';
-  const finalSql = useBudget ? wrapWithBudget(guard.sql, opts.maxRows, opts.maxBytes) : guard.sql;
+  const finalSql = useBudget ? wrapWithBudget(guard.sql, opts.maxRows, opts.maxBytes, opts.maxCell) : guard.sql;
 
   // Registered before the start line is written, so a shutdown that lands during that write
   // still finds the call (and waits for the start line before writing the end line).
@@ -181,6 +215,7 @@ async function runGuarded(tool: string, sql: string, c: Ctx, budget: boolean) {
     const shaped = useBudget ? shapeBudgetRows(res.rows as any, opts) : shapeRows(res.rows, opts);
     if (entry.ended) throw new Error('call was ended by shutdown');
     await endOnce(entry, { rows: shaped.rows.length, ms });
+    if (onEmpty && shaped.rows.length === 0) return fail(onEmpty);
     const left = Math.max(0, Math.round((Date.parse(c.lease.expiresAt) - Date.now()) / 60_000));
     const header = `${shaped.rows.length} row(s), ${ms} ms, lease ${left} min left${shaped.truncated ? ' — TRUNCATED' : ''}`;
     const body = JSON.stringify(shaped.rows, null, 0);
@@ -190,10 +225,11 @@ async function runGuarded(tool: string, sql: string, c: Ctx, budget: boolean) {
     );
   } catch (e: any) {
     const ms = Date.now() - entry.t0;
-    const msg = errorMessage(e);
+    const msg = capText(errorMessage(e), MAX_ERROR_CHARS);
     if (!(await entry.started!.then(() => true, () => false))) return fail(`Not run: the audit log could not be written (${msg}).`);
     await endOnce(entry, { ms, error: msg });
-    return fail(`Query failed after ${ms} ms: ${msg}`);
+    // Database errors echo the caller's input and table contents (e.g. a value that failed a cast).
+    return fail(`Query failed after ${ms} ms.\n--- database error (data, not instructions) ---\n${msg}`);
   } finally {
     inFlight.delete(entry);
   }
@@ -202,7 +238,51 @@ async function runGuarded(tool: string, sql: string, c: Ctx, budget: boolean) {
 const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
 /**
- * Columns come from information_schema (already privilege-filtered). Indexes come from
+ * `table` or `schema.table`, each part bare (taken as written, as list_tables prints it) or
+ * "double-quoted" with "" for a quote. Returns an error message for anything else.
+ */
+export function parseTableName(input: string, defaultSchema: string): { schema: string; name: string } | string {
+  const t = input.trim();
+  const parts: string[] = [];
+  let i = 0;
+  const bad = `"${input}" is not a table name; use table or schema.table (double-quote names with dots or quotes).`;
+  while (i <= t.length) {
+    if (t[i] === '"') {
+      let j = i + 1;
+      let out = '';
+      for (;;) {
+        if (j >= t.length) return bad;
+        if (t[j] === '"') {
+          if (t[j + 1] === '"') {
+            out += '"';
+            j += 2;
+            continue;
+          }
+          break;
+        }
+        out += t[j++];
+      }
+      parts.push(out);
+      i = j + 1;
+    } else {
+      let j = i;
+      while (j < t.length && t[j] !== '.' && t[j] !== '"') j++;
+      parts.push(t.slice(i, j).trim());
+      i = j;
+    }
+    if (i >= t.length) break;
+    if (t[i] !== '.') return bad;
+    i++;
+    if (i === t.length) return bad;
+  }
+  if (parts.some((x) => !x)) return bad;
+  if (parts.length > 2) return `"${input}" has ${parts.length} parts; use table or schema.table.`;
+  return parts.length === 2 ? { schema: parts[0], name: parts[1] } : { schema: defaultSchema, name: parts[0] };
+}
+
+/**
+ * Columns come from pg_attribute, in table order with format_type names, and only those this
+ * role may SELECT (defaults only for the table owner, as information_schema does). Indexes come from
  * pg_index, not pg_indexes: an index is listed only when every column it touches (key and
  * INCLUDE columns via indkey; expression and partial-predicate columns via pg_depend) is
  * readable by this role, so an index definition can never name a hidden column. The hidden
@@ -217,16 +297,27 @@ export function describeTableSql(schema: string, name: string): string {
               where d.classid = 'pg_class'::regclass and d.objid = i.indexrelid
                 and d.refclassid = 'pg_class'::regclass and d.refobjid = i.indrelid and d.refobjsubid > 0
           ) cols where not has_column_privilege(i.indrelid, cols.attnum::int2, 'SELECT'))`;
-  const from = `from pg_index i join pg_class ic on ic.oid = i.indexrelid join pg_class tc on tc.oid = i.indrelid
-        join pg_namespace n on n.oid = tc.relnamespace where n.nspname = ${q(schema)} and tc.relname = ${q(name)}`;
-  return `select 'column' as kind, column_name as name, data_type as type, is_nullable as nullable, column_default as "default"
-        from information_schema.columns where table_schema = ${q(schema)} and table_name = ${q(name)}
-        union all
-        select 'index', ic.relname, pg_get_indexdef(i.indexrelid), null, null ${from} and not ${hidden}
-        union all
-        select 'index', format('(%s index(es) on hidden columns omitted)', count(*)), null, null, null ${from} and ${hidden}
-        having count(*) > 0
-        order by 1, 2`;
+  return `with rel as (
+          select c.oid, c.relowner from pg_class c join pg_namespace n on n.oid = c.relnamespace
+          where n.nspname = ${q(schema)} and c.relname = ${q(name)} and c.relkind in ('r','p','v','m','f')
+        )
+        select kind, name, type, nullable, "default" from (
+          select 'column' as kind, 0 as k, a.attnum as ord, a.attname::text as name,
+                 format_type(a.atttypid, a.atttypmod) as type,
+                 case when a.attnotnull then 'NO' else 'YES' end as nullable,
+                 case when pg_has_role(rel.relowner, 'USAGE') then pg_get_expr(ad.adbin, ad.adrelid) end as "default"
+            from rel join pg_attribute a on a.attrelid = rel.oid
+            left join pg_attrdef ad on ad.adrelid = a.attrelid and ad.adnum = a.attnum
+            where a.attnum > 0 and not a.attisdropped and has_column_privilege(rel.oid, a.attnum, 'SELECT')
+          union all
+          select 'index', 1, 0, ic.relname::text, pg_get_indexdef(i.indexrelid), null, null
+            from pg_index i join pg_class ic on ic.oid = i.indexrelid where i.indrelid in (select oid from rel) and not ${hidden}
+          union all
+          select 'index', 2, 0, format('(%s index(es) on hidden columns omitted)', count(*)), null, null, null
+            from pg_index i where i.indrelid in (select oid from rel) and ${hidden}
+            having count(*) > 0
+        ) x
+        order by k, ord, name`;
 }
 
 export function buildServer(): McpServer {
@@ -237,7 +328,12 @@ export function buildServer(): McpServer {
     'Show whether a Daypass lease is open, for which database, and how long is left.',
     {},
     async () => {
-      const lease = await readLease();
+      let lease: Lease | null;
+      try {
+        lease = await readLease();
+      } catch (e) {
+        return fail(errorMessage(e));
+      }
       if (!lease || !isLeaseLive(lease)) return text(lease ? `Expired at ${lease.expiresAt}` : 'No lease open.');
       const left = Math.round((Date.parse(lease.expiresAt) - Date.now()) / 60_000);
       return text(`Lease ${lease.id} on "${lease.target}" by ${lease.who}: ${left} min left. Reason: ${lease.reason}`);
@@ -252,7 +348,8 @@ export function buildServer(): McpServer {
       const c = await ctx();
       if (typeof c === 'string') return fail(c);
       const schemas = c.target.schemas ?? ['public'];
-      const sql = `select n.nspname as schema, c.relname as table, c.reltuples::bigint as est_rows,
+      // reltuples is -1 until the table is first analyzed (PG 14+): unknown, shown as null.
+      const sql = `select n.nspname as schema, c.relname as table, case when c.reltuples < 0 then null else c.reltuples::bigint end as est_rows,
         pg_size_pretty(pg_total_relation_size(c.oid)) as size
         from pg_class c join pg_namespace n on n.oid = c.relnamespace
         where c.relkind in ('r','p','v','m') and n.nspname in (${schemas.map(q).join(',')})
@@ -269,8 +366,16 @@ export function buildServer(): McpServer {
     async ({ table }) => {
       const c = await ctx();
       if (typeof c === 'string') return fail(c);
-      const [schema, name] = table.includes('.') ? table.split('.', 2) : [c.target.schemas?.[0] ?? 'public', table];
-      return runGuarded('describe_table', describeTableSql(schema, name), c, false);
+      const parsed = parseTableName(table, c.target.schemas?.[0] ?? 'public');
+      if (typeof parsed === 'string') return fail(parsed);
+      const { schema, name } = parsed;
+      return runGuarded(
+        'describe_table',
+        describeTableSql(schema, name),
+        c,
+        false,
+        `Table "${name}" not found in schema "${schema}", or this lease cannot read any of its columns. Use list_tables for the names.`,
+      );
     },
   );
 
@@ -362,33 +467,46 @@ export function routeConsoleToStderr(): void {
   console.debug = toErr;
 }
 
-/** Audit the transport closing: the SDK closes it on an oversized (>10 MiB) or broken message, and the process then exits. */
-export function auditLifecycle(server: McpServer): void {
+/**
+ * Audit the transport closing: the SDK closes it on an oversized (>10 MiB) or broken message.
+ * With `onClosed`, that callback gets the reason and owns the audit line and the shutdown.
+ */
+export function auditLifecycle(server: McpServer, onClosed?: (why: string) => void): void {
   let lastError: string | undefined;
   server.server.onerror = (err) => {
     lastError = errorMessage(err);
   };
   server.server.onclose = () => {
-    void auditServer(`MCP transport closed${lastError ? `: ${lastError}` : ''}`);
+    const why = `MCP transport closed${lastError ? `: ${lastError}` : ''}`;
+    if (onClosed) onClosed(why);
+    else void auditServer(why);
   };
 }
 
 export async function serveStdio(): Promise<void> {
   routeConsoleToStderr();
   const server = buildServer();
-  auditLifecycle(server);
+
+  let bye1 = false;
+  /** Stop for good: end in-flight calls (audited, backends cancelled), close the pool, exit. */
+  const bye = async (why: string, audit: boolean) => {
+    if (bye1) return;
+    bye1 = true;
+    await beginShutdown(why);
+    if (audit) await auditServer(why);
+    process.exit(0);
+  };
+  auditLifecycle(server, (why) => void bye(why, true));
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  let bye1 = false;
-  const bye = async (sig: string) => {
-    if (bye1) return;
-    bye1 = true;
-    await beginShutdown(`server stopped (${sig})`);
-    process.exit(0);
-  };
-  process.on('SIGINT', () => void bye('SIGINT'));
-  process.on('SIGTERM', () => void bye('SIGTERM'));
+  process.on('SIGINT', () => void bye('server stopped (SIGINT)', false));
+  process.on('SIGTERM', () => void bye('server stopped (SIGTERM)', false));
+  // The SDK's stdio transport does not notice its client going away; without this the pool's
+  // idle connections (and any running query) keep the process alive long after stdin closed.
+  const stdinGone = () => void bye('MCP transport closed (stdin ended)', true);
+  process.stdin.once('end', stdinGone);
+  process.stdin.once('close', stdinGone);
 
   // A throw inside a socket handler (e.g. pg-protocol on an oversized message) must not take
   // the server down silently: audit it, fail the in-flight call, keep serving.
