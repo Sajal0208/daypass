@@ -9,7 +9,8 @@ Only the latest minor line gets security fixes. Upgrade before reporting if you 
 
 | Version | Supported |
 |---|---|
-| 0.1.x | Yes |
+| 0.2.x | Yes |
+| 0.1.x | No: role setup holes, see GHSA-rjrr-9c6p-6wxc; upgrade and re-run the setup |
 | anything older | No |
 
 ## Reporting a vulnerability
@@ -23,8 +24,7 @@ when it happens through Daypass.
 - **Email** **security@vocobase.com**. This always works, and is the route to use if you are
   unsure.
 - **GitHub private report** at
-  <https://github.com/Sajal0208/daypass/security/advisories/new>, once private vulnerability
-  reporting is switched on for the repository (it is being enabled). It keeps the report, the
+  <https://github.com/Sajal0208/daypass/security/advisories/new>. It keeps the report, the
   discussion and the fix in one place and lets us publish an advisory with a CVE when the fix
   ships. If the page shows no report form, use email.
 
