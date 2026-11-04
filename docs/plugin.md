@@ -91,7 +91,7 @@ hidden list, and no secret enters the chat. Source: [`plugin/skills/daypass-setu
 ### `/daypass:daypass-status`
 
 Runs `daypass status` and reports it: a live lease as id, target, who, reason and minutes
-left; an expired lease as "run `daypass close`"; no lease as the exact `daypass open`
+left; an expired lease as "run `daypass close <target>`"; no lease as the exact `daypass open`
 line to paste, with the target and reason filled from the conversation when known. It never
 opens or closes a lease itself.
 

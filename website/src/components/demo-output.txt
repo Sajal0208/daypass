@@ -1,6 +1,6 @@
 $ daypass open prod --ttl 30m --reason "why did signups drop on Monday"
 Lease 434c787d open on "prod" until 2026-11-04T12:15:15.794Z (30m). Reason: why did signups drop on Monday
-Your AI session can now use the daypass MCP tools. Close early with: daypass close
+Your AI session can now use the daypass MCP tools. Close early with: daypass close prod
 
 $ daypass status
 Lease 434c787d on "prod" by dev@laptop: 30 min left. Reason: why did signups drop on Monday

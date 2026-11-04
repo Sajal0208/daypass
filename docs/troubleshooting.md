@@ -117,7 +117,7 @@ Detail: the lease id and expiry.
 ✖ lease            none open for "staging" (daypass open staging --reason ...)
 ```
 
-No live lease for this target. Run the printed command. A lease that is open on a different target also shows as ✖ for this one; only one lease exists at a time (`daypass status` shows which). An expired lease is the same ✖; `daypass close` clears it.
+No live lease for this target. Run the printed command. A lease that is open on a different target also shows as ✖ for this one: `daypass status` lists every lease; open one for this target. An expired lease is the same ✖; `daypass close <target>` clears it.
 
 ### `db login`
 
@@ -301,11 +301,19 @@ Five Daypass processes (one per AI session) each hold a connection. Close idle s
 
 ### `Lease target "staging" is not in config.`
 
-The lease names a target that was removed or renamed in the config after `open`. `daypass close`, fix the config, `open` again.
+The lease names a target that was removed or renamed in the config after `open`. `daypass close <target>`, fix the config, `open` again.
 
-### `A lease is already open (85d19374 on staging, until …). Run: daypass close`
+### `A lease is already open on "staging" (85d19374, until …). Run: daypass close staging`
 
-Printed by `daypass open` (exit code 1), not by a tool. One lease per machine. Close the current one first, or wait for it to expire. Note that `open` on a second target while the first lease is live is refused, not switched.
+Printed by `daypass open` (exit code 1), not by a tool. One lease per target: this target already has a live lease. Close it first, or wait for it to expire. A lease on another target does not block this one.
+
+### `2 leases are open (staging, prod). Pass target: one of them.`
+
+A tool error. Several leases are open and the call did not say which database to use. Name the target in the question; the agent then passes `target` on every call. `daypass_status` lists the open leases.
+
+### `Target "prod2" needs the same security-group rule as the live lease on "prod" …`
+
+Printed by `daypass open` (exit code 1), before any AWS call. The two targets share a security group, region and port, so they would need the same rule: AWS allows only one, and closing either lease would remove it for both. Close that one first: `daypass close prod`.
 
 ### `Query failed after 17 ms.` … `permission denied for table customers`
 

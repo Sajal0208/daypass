@@ -70,7 +70,7 @@ then `/plugin update daypass@daypass`) and restart Claude Code.
   created in, so `close` and expiry cleanup revoke it there even if the config changed, and
   only if the rule's description is still the one Daypass wrote. Expiry cleanup waits at most
   10 s for AWS. A corrupt lease is reported (`daypass close` removes it). `daypass
-  open` exits 1 when a lease is already open. Audit fields are capped, a long statement is
+  open` exits 1 when that target already has a live lease. Audit fields are capped, a long statement is
   stored as a prefix plus its SHA-256, and `daypass log` escapes control characters and skips
   unreadable lines with a warning. `daypass log -n` takes positive integers only.
 - **AWS.** `daypass sweep` removes only rules whose description is exactly the one Daypass

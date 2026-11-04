@@ -4,7 +4,7 @@ Daypass is five small parts: a lease that says access is open, a guard that read
 
 ## Lease
 
-A lease is a file: `~/.daypass/lease.json` (or `$DAYPASS_HOME/lease.json`). `daypass open` writes it, `daypass close` deletes it, and the MCP server reads it at the start of every tool call. No file, or `expiresAt` in the past, and every tool except `daypass_status` returns an error asking the user to run `daypass open` (`daypass_status` returns plain text: `No lease open.` or `Expired at …`).
+A lease is a file: `~/.daypass/lease.json` (or `$DAYPASS_HOME/lease.json`). `daypass open` writes it, `daypass close` deletes it, and the MCP server reads it at the start of every tool call. No file, or `expiresAt` in the past, and every tool except `daypass_status` returns an error asking the user to run `daypass open` (`daypass_status` returns plain text: `No lease open.`, `Expired at …` with one lease, or one line per lease with several).
 
 ```json
 {
@@ -19,7 +19,8 @@ A lease is a file: `~/.daypass/lease.json` (or `$DAYPASS_HOME/lease.json`). `day
 
 Facts about leases:
 
-- **One per laptop.** Not per Claude session. Every Claude Code window on the machine has the tools while the lease is open. Opening a second one is refused, with exit code 1: `A lease is already open (85d19374 on staging, until …). Run: daypass close`.
+- **One per target.** Not per Claude session. Every Claude Code window on the machine has the tools while a lease is open. `daypass open a` then `daypass open b` gives two leases. Opening a target that already has a live lease is refused, with exit code 1: `A lease is already open on "staging" (85d19374, until …). Run: daypass close staging`. With two or more open, every tool needs a `target` argument. Two targets behind the same security group and port cannot be open at once. `daypass close` with no target closes all.
+- **File shape.** With one lease the file is the lease itself, as above. With two or more it is `{ "version": 2, "leases": [ … ] }`, at most one entry per target. Daypass 0.2.0 reads the second shape as a corrupt lease file.
 - **TTL.** `--ttl` takes `90s`, `30m`, `2h`. Default `60m`, minimum `60s`, maximum `8h`.
 - **Who.** For an AWS RDS target it is the AWS caller ARN from `sts:GetCallerIdentity`, which cannot be set from the shell. For a URL or password target it is the OS account name of the process (not the `USER` variable, which any shell can set) `@hostname`.
 - **Reason** is required. It goes into the lease and into every audit line written under it.
