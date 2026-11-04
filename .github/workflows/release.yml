@@ -81,9 +81,11 @@ jobs:
           npm install --no-audit --no-fund --ignore-scripts "$root/$tgz"
           got="$(./node_modules/.bin/daypass --version)"
           [ "$got" = "$expected" ] || { echo "daypass --version printed '$got', expected '$expected'"; exit 1; }
-          sql="$(./node_modules/.bin/daypass sql --role daypass_smoke_role)"
-          printf '%s\n' "$sql" | head -n 1
-          printf '%s\n' "$sql" | grep -q 'daypass_smoke_role' || { echo "role name missing from 'daypass sql --role daypass_smoke_role' output"; exit 1; }
+          # Into a file, not a pipe: the SQL is over 64 KiB, and under pipefail a reader that
+          # stops early (head, grep -q) gives the writer EPIPE and fails the step (v0.2.1 build).
+          ./node_modules/.bin/daypass sql --role daypass_smoke_role >setup.sql
+          head -n 1 setup.sql
+          grep -q 'daypass_smoke_role' setup.sql || { echo "role name missing from 'daypass sql --role daypass_smoke_role' output"; exit 1; }
           cd "$root"
           rm -rf "$dir"
           sha="$(sha256sum "$tgz" | cut -d' ' -f1)"
