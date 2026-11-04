@@ -315,38 +315,70 @@ export async function readLeases(): Promise<Lease[]> {
     throw corrupt();
   }
   const leases: Lease[] = v?.version === 2 && Array.isArray(v.leases) ? v.leases.map(parseLease) : [parseLease(v)];
+  // An empty file is removed, never written as an empty list: one that says so was not written by daypass.
+  if (leases.length === 0) throw corrupt();
   if (new Set(leases.map((l) => l.target)).size !== leases.length) throw corrupt();
   return leases;
 }
 
 /** Serialises every change of lease.json (writeLease, clearLease) across processes. */
 const LEASE_LOCK = join(DAYPASS_HOME, '.lease.lock');
+/** Held for the instant it takes to remove a stale lease lock, so only one waiter removes it. */
+const BREAK_LOCK = join(DAYPASS_HOME, '.lease.lock.break');
 /** A lock older than this was left by a process that died holding it; the critical section takes milliseconds. */
 const LOCK_STALE_MS = 5_000;
 const LOCK_WAIT_MS = 10_000;
 
+const isStale = (st: Stats | null) => !!st && Date.now() - st.mtimeMs > LOCK_STALE_MS;
+
 /**
- * Run `fn` holding the lease lock: an O_EXCL lockfile in DAYPASS_HOME. A lock older than
- * LOCK_STALE_MS is removed (its holder died); two waiters breaking the same stale lock at once
- * could both proceed, a window this simple scheme accepts. With several targets in one file, two
- * waiters that break the same stale lock can also lose another target's entry, not just a
- * whole-file write. Gives up after LOCK_WAIT_MS.
+ * Remove the lease lock if it is stale, and say whether it did. Only the waiter holding
+ * BREAK_LOCK may remove it, and only after looking at the lock again: otherwise a waiter that
+ * saw the old lock could remove the fresh one another waiter has just taken, and two writers
+ * would then run at once and lose a target's lease. A BREAK_LOCK left by a dead process is
+ * itself removed once stale.
+ */
+async function breakStaleLock(): Promise<boolean> {
+  if (!isStale(await fs.lstat(LEASE_LOCK).catch(() => null))) return false;
+  try {
+    await (await fs.open(BREAK_LOCK, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | O_NOFOLLOW, 0o600)).close();
+  } catch (e: any) {
+    if (e.code !== 'EEXIST') throw e;
+    if (isStale(await fs.lstat(BREAK_LOCK).catch(() => null))) await fs.rm(BREAK_LOCK, { force: true });
+    return false;
+  }
+  try {
+    if (!isStale(await fs.lstat(LEASE_LOCK).catch(() => null))) return false;
+    await fs.rm(LEASE_LOCK, { force: true });
+    return true;
+  } finally {
+    await fs.rm(BREAK_LOCK, { force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Run `fn` holding the lease lock: an O_EXCL lockfile in DAYPASS_HOME that holds a random token.
+ * A lock older than LOCK_STALE_MS was left by a dead process and is removed by one waiter only
+ * (breakStaleLock). On the way out the lock is removed only if it still holds this call's
+ * token, so a holder that ran past LOCK_STALE_MS (a laptop that slept) cannot remove the lock
+ * of the waiter that took over from it. Gives up after LOCK_WAIT_MS.
  */
 async function withLeaseLock<T>(fn: () => Promise<T>): Promise<T> {
+  const token = randomBytes(8).toString('hex');
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
     try {
       const fh = await fs.open(LEASE_LOCK, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | O_NOFOLLOW, 0o600);
-      await fh.close();
+      try {
+        await fh.writeFile(token);
+      } finally {
+        await fh.close();
+      }
       break;
     } catch (e: any) {
       if (e.code !== 'EEXIST') throw e;
     }
-    const st = await fs.lstat(LEASE_LOCK).catch(() => null);
-    if (st && Date.now() - st.mtimeMs > LOCK_STALE_MS) {
-      await fs.rm(LEASE_LOCK, { force: true });
-      continue;
-    }
+    if (await breakStaleLock()) continue;
     if (Date.now() > deadline) {
       throw new Error(`${LEASE_LOCK} is held by another daypass process; if none is running, remove it.`);
     }
@@ -355,7 +387,8 @@ async function withLeaseLock<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } finally {
-    await fs.rm(LEASE_LOCK, { force: true }).catch(() => {});
+    const now = await fs.readFile(LEASE_LOCK, 'utf8').catch(() => null);
+    if (now === token) await fs.rm(LEASE_LOCK, { force: true }).catch(() => {});
   }
 }
 
@@ -381,8 +414,22 @@ async function writeLeaseFile(leases: Lease[]): Promise<void> {
       await fh.close();
     }
     await fs.rename(tmp, LEASE_PATH);
+    await syncDir();
   } finally {
     await fs.rm(tmp, { force: true }).catch(() => {});
+  }
+}
+
+/** Make a rename in DAYPASS_HOME durable. Best effort: some platforms cannot fsync a directory. */
+async function syncDir(): Promise<void> {
+  const dh = await fs.open(DAYPASS_HOME, fsc.O_RDONLY).catch(() => null);
+  if (!dh) return;
+  try {
+    await dh.sync();
+  } catch {
+    /* not supported here */
+  } finally {
+    await dh.close();
   }
 }
 
@@ -414,12 +461,23 @@ export async function writeLease(l: Lease, opts: { ifId?: string | null } = {}):
   });
 }
 
-/** Remove the lease for `target`, or every lease (the whole file, even a corrupt one) without one. */
-export async function clearLease(target?: string): Promise<void> {
-  if (!(await checkHome(false))) return;
-  await withLeaseLock(async () => {
-    if (target === undefined) return fs.rm(LEASE_PATH, { force: true });
-    await writeLeaseFile((await readLeases()).filter((x) => x.target !== target));
+/**
+ * Remove the lease for `target`, or every lease (the whole file, even a corrupt one) without one.
+ * With `ifId`, the target's lease is removed only if it still has that id, so a lease opened
+ * since the caller looked is kept. Returns whether it removed anything.
+ */
+export async function clearLease(target?: string, opts: { ifId?: string } = {}): Promise<boolean> {
+  if (!(await checkHome(false))) return false;
+  return withLeaseLock(async () => {
+    if (target === undefined) {
+      await fs.rm(LEASE_PATH, { force: true });
+      return true;
+    }
+    const leases = await readLeases();
+    const mine = leases.find((x) => x.target === target);
+    if (!mine || (opts.ifId !== undefined && mine.id !== opts.ifId)) return false;
+    await writeLeaseFile(leases.filter((x) => x !== mine));
+    return true;
   });
 }
 

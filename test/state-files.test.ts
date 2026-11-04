@@ -236,3 +236,32 @@ describe('lease.json: one lease per target', () => {
     expect(existsSync(join(home, 'lease.json'))).toBe(false);
   });
 });
+
+describe('lease.json: review fixes (PR #29)', () => {
+  it('a v2 file with no leases is corrupt, not empty', async () => {
+    const { state } = await fresh((h) => writeFileSync(join(h, 'lease.json'), JSON.stringify({ version: 2, leases: [] }), { mode: 0o600 }));
+    await expect(state.readLeases()).rejects.toThrow(/corrupt/);
+  });
+  it('clearLease(target, { ifId }) removes the lease only while it still has that id', async () => {
+    const { state } = await fresh();
+    await state.writeLease(lease);
+    expect(await state.clearLease('t', { ifId: 'other' })).toBe(false);
+    expect((await state.readLeases()).map((l: any) => l.id)).toEqual(['aaaa1111']);
+    expect(await state.clearLease('t', { ifId: 'aaaa1111' })).toBe(true);
+    expect(await state.readLeases()).toEqual([]);
+  });
+  it('several processes breaking the same stale lock never lose a target', async () => {
+    const STATE = join(resolve(__dirname, '..'), 'dist', 'mcp', 'state.js');
+    const script = `const s = await import(${JSON.stringify(STATE)}); await s.writeLease({ id: 'id-' + process.argv[1], target: process.argv[1], reason: 'r', who: 'w', openedAt: '', expiresAt: '2999-01-01T00:00:00Z' });`;
+    for (let round = 0; round < 8; round++) {
+      const { home, state } = await fresh();
+      const lock = join(home, '.lease.lock');
+      writeFileSync(lock, 'crashed');
+      const old = new Date(Date.now() - 60_000);
+      utimesSync(lock, old, old);
+      const names = ['t1', 't2', 't3', 't4', 't5', 't6'];
+      await Promise.all(names.map((n) => promisify(execFile)('node', ['--input-type=module', '-e', script, n], { env: { ...process.env, DAYPASS_HOME: home } })));
+      expect((await state.readLeases()).map((l: any) => l.target).sort(), `round ${round}`).toEqual(names);
+    }
+  }, 60_000);
+});
