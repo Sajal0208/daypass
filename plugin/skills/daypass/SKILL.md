@@ -20,9 +20,10 @@ reply with exactly one runnable line and nothing else, then stop:
 daypass open <target> --ttl 45m --reason "<the user's question in at most 8 words>"
 ```
 
-`daypass_status` does not name the target (`Expired at <ISO>` is all it says). Use the
-target from the conversation if you already know it; otherwise leave `<target>`. Never
-read `~/.daypass/config.json` or `lease.json` to find it (the config can hold passwords).
+With one lease, `daypass_status` does not name an expired lease's target (`Expired at
+<ISO>` is all it says). Use the target from the conversation if you already know it;
+otherwise leave `<target>`. Never read `~/.daypass/config.json` or `lease.json` to find
+it (the config can hold passwords).
 Never run `daypass open` yourself, never ask for a password, never ask for a
 connection URL. The user opens the door; you only tell them the exact line. When they
 say it is open, call `daypass_status` again and go on.
@@ -30,6 +31,15 @@ say it is open, call `daypass_status` again and go on.
 Any other tool failing with `No active Daypass lease…` or `Lease <id> for "<target>"
 expired at …` means the same thing: send the line, stop. That refusal does name the
 target; use it.
+
+**Several leases.** `daypass_status` may print one line per lease (`Lease <id> on "<t>"
+… min left …` or `Lease <id> on "<t>" expired at …`) and a last line `Pass target: "a"
+or "b" …`. Then pass `target` on **every** `list_tables`, `describe_table`, `query` and
+`explain` call, chosen from the question. If the question does not say which database,
+ask in one line and stop. Name the target in the answer and in the sign-off.
+
+To end a lease, suggest `daypass close <target>`. Never run or suggest bare `daypass
+close` unless the user asks to close everything: it closes every lease.
 
 ## 2. Learn the shape before you query
 
