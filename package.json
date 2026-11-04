@@ -36,6 +36,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli/main.js",
+    "pretest": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "npm run build && npm test"

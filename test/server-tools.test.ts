@@ -538,6 +538,46 @@ describe.skipIf(!live)('MCP server tools', () => {
       expect(elapsed).toBeLessThan(6000);
     });
   });
+
+  describe('several leases', () => {
+    const cfgPath = join(home, 'config.json');
+    let saved: string;
+    const v2 = () => {
+      const l = (id: string, target: string) => ({ id, target, reason: 'test', who: 'tester', openedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 30 * 60_000).toISOString() });
+      writeFileSync(join(home, 'lease.json'), JSON.stringify({ version: 2, leases: [l('lease-ws2', 't'), l('lease-t2', 't2')] }));
+    };
+    beforeAll(async () => {
+      saved = readFileSync(cfgPath, 'utf8');
+      const cfg = JSON.parse(saved);
+      // t2 is another database on the same server, so a query that went to t's pool would show it.
+      await owner.query(`grant connect on database template1 to ${ROLE}`);
+      const u = new URL(cfg.targets.t.url);
+      u.pathname = '/template1';
+      cfg.targets.t2 = { ...cfg.targets.t, url: u.toString() };
+      writeFileSync(cfgPath, JSON.stringify(cfg));
+      v2();
+    });
+    afterAll(() => {
+      writeFileSync(cfgPath, saved);
+      writeLease(30 * 60_000);
+    });
+    it('query with target "t2" runs on t2\'s database under its lease; the audit says so', async () => {
+      const r = await call('query', { sql: 'select current_database() as db', target: 't2' });
+      expect(r.ok).toBe(true);
+      expect(rowsOf(r.text)).toEqual([{ db: 'template1' }]);
+      const r1 = await call('query', { sql: 'select current_database() as db', target: 't' });
+      expect(rowsOf(r1.text)).not.toEqual([{ db: 'template1' }]);
+      await call('query', { sql: 'select current_database() as db', target: 't2' });
+      expect(lastAudit(1)[0]).toMatchObject({ phase: 'end', target: 't2', leaseId: 'lease-t2' });
+    });
+    it('query with no target is refused and nothing runs', async () => {
+      const before = auditLines().length;
+      const r = await call('query', { sql: 'select 42 as answer' });
+      expect(r.ok).toBe(false);
+      expect(r.text).toMatch(/2 leases are open/);
+      expect(auditLines().slice(before).filter((l: any) => l.allowed === true)).toEqual([]);
+    });
+  });
 });
 
 describe('parseTableName', () => {

@@ -124,7 +124,7 @@ daypass open staging --ttl 30m --reason "why did signups drop on Monday"
 
 ```
 Lease 85d19374 open on "staging" until 2026-10-29T14:46:59.226Z (30m). Reason: why did signups drop on Monday
-Your AI session can now use the daypass MCP tools. Close early with: daypass close
+Your AI session can now use the daypass MCP tools. Close early with: daypass close staging
 ```
 
 Check the whole chain before you ask the agent anything:
@@ -204,7 +204,7 @@ daypass log -n 5
 When you are done, or just let it expire:
 
 ```bash
-daypass close
+daypass close staging    # with no target, closes every lease
 ```
 
 ## Next

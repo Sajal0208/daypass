@@ -3,7 +3,7 @@ export {
   readConfig,
   resolveTarget,
   parsePostgresUrl,
-  readLease,
+  readLeases,
   writeLease,
   clearLease,
   appendAudit,

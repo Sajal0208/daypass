@@ -13,7 +13,7 @@ import type { Lease } from '../core/index.js';
 import { parseHiddenFile, renderSetupSql } from '../core/hidden.js';
 import {
   readConfig,
-  readLease,
+  readLeases,
   writeLease,
   clearLease,
   readAuditDetailed,
@@ -139,9 +139,36 @@ program
     if (!raw) throw new Error(`Unknown target "${targetName}". Known: ${Object.keys(cfg.targets).join(', ')}`);
     const t = resolveTarget(targetName, raw);
 
-    const existing = await readLease();
+    let leases: Lease[];
+    try {
+      leases = await readLeases();
+    } catch (e) {
+      if (e instanceof LeaseCorruptError) throw new Error(`${e.message} (this removes every lease), then retry.`);
+      throw e;
+    }
+    const existing = leases.find((l) => l.target === targetName);
     if (existing && isLeaseLive(existing)) {
-      throw new Error(`A lease is already open (${p(existing.id)} on ${p(existing.target)}, until ${p(existing.expiresAt)}). Run: daypass close`);
+      throw new Error(`A lease is already open on ${p(`"${targetName}"`)} (${p(existing.id)}, until ${p(existing.expiresAt)}). Run: daypass close ${p(targetName)}`);
+    }
+    // AWS allows one rule per group/port/CIDR, and closing either lease would revoke it for both.
+    // An expired lease whose rule was not revoked yet still holds it.
+    if (opts.network && t.region && t.securityGroupId) {
+      const clash = leases.find(
+        (o) =>
+          o.target !== targetName &&
+          o.sgRuleId &&
+          o.sgGroupId === t.securityGroupId &&
+          o.sgRegion === t.region &&
+          (o.sgPort === undefined || o.sgPort === t.port),
+      );
+      if (clash) {
+        const where = `(${p(t.securityGroupId)} in ${p(t.region)}, port ${t.port})`;
+        throw new Error(
+          isLeaseLive(clash)
+            ? `Target "${p(targetName)}" needs the same security-group rule as the live lease on "${p(clash.target)}" ${where}. Close that one first: daypass close ${p(clash.target)}`
+            : `Target "${p(targetName)}" needs the same security-group rule ${where}, and the expired lease on "${p(clash.target)}" still holds that rule. Run: daypass close ${p(clash.target)}`,
+        );
+      }
     }
     if (existing) await releaseNetwork(existing, cfg.targets[existing.target]).catch((e) => console.warn(`cleanup: ${e.message}`));
 
@@ -159,15 +186,26 @@ program
     // `close` knows about. One window remains: a crash after AWS created the rule but before the
     // rule id is written. That rule is tagged daypass:<lease id> with the expiry, and
     // `daypass sweep <target>` removes it once the lease has expired.
-    await writeLease(lease);
+    // Only if nobody else opened this target since we looked.
+    if (!(await writeLease(lease, { ifId: existing?.id ?? null }))) {
+      throw new Error(`Another "daypass open ${p(targetName)}" ran at the same time. Run: daypass status`);
+    }
+    const closedMeanwhile = () =>
+      new Error(`Lease ${p(lease.id)} on "${p(targetName)}" was closed while daypass open was running. Run daypass open again if you still need it.`);
     if (opts.network && t.region && t.securityGroupId) {
+      let gone = false;
       try {
         lease.ip = await myPublicIp();
         // Recorded before the rule exists, so close/cleanup revoke it in this group even if the config changes.
         lease.sgRegion = t.region;
         lease.sgGroupId = t.securityGroupId;
+        lease.sgPort = t.port;
         if (t.awsProfile) lease.sgProfile = t.awsProfile;
-        await writeLease(lease);
+        // Only while the lease is still ours: a `daypass close` meanwhile wins, and no rule is made.
+        if (!(await writeLease(lease, { ifId: lease.id }))) {
+          gone = true;
+          throw closedMeanwhile();
+        }
         lease.sgRuleId = await allowIp({
           region: t.region,
           profile: t.awsProfile,
@@ -178,61 +216,86 @@ program
           expiresAt: lease.expiresAt,
         });
       } catch (e: any) {
-        console.error(`Lease ${lease.id} was recorded, but opening the network failed. Run: daypass close (then retry daypass open)`);
+        if (!gone) console.error(`Lease ${lease.id} was recorded, but opening the network failed. Run: daypass close ${p(targetName)} (then retry daypass open)`);
         throw e;
       }
-      await writeLease(lease);
+      // Closed while AWS made the rule: nothing on disk points at the rule any more, so revoke it now.
+      if (!(await writeLease(lease, { ifId: lease.id }))) {
+        await releaseNetwork(lease, raw).catch((e) =>
+          console.warn(`warning: rule ${p(lease.sgRuleId)} was NOT revoked (${p(e.message)}). It expires at ${p(lease.expiresAt)}; then run: daypass sweep ${p(targetName)}`),
+        );
+        throw closedMeanwhile();
+      }
       console.log(`Allowed ${lease.ip} on ${t.securityGroupId} (rule ${lease.sgRuleId})`);
     }
 
     console.log(`Lease ${lease.id} open on "${targetName}" until ${lease.expiresAt} (${opts.ttl}). Reason: ${lease.reason}`);
-    console.log('Your AI session can now use the daypass MCP tools. Close early with: daypass close');
+    console.log(`Your AI session can now use the daypass MCP tools. Close early with: daypass close ${targetName}`);
   });
 
 program
   .command('status')
-  .description('Show the current lease')
+  .description('Show the open leases')
   .action(async () => {
-    const l = await readLease();
-    if (!l) return console.log('No lease.');
-    const left = Math.round((Date.parse(l.expiresAt) - Date.now()) / 60_000);
-    console.log(
-      isLeaseLive(l)
-        ? `Lease ${p(l.id)} on "${p(l.target)}" by ${p(l.who)}: ${left} min left. Reason: ${p(l.reason)}`
-        : `Lease ${p(l.id)} on "${p(l.target)}" expired at ${p(l.expiresAt)}. Run: daypass close`,
-    );
+    const leases = await readLeases();
+    if (!leases.length) return console.log('No lease.');
+    for (const l of leases) {
+      const left = Math.round((Date.parse(l.expiresAt) - Date.now()) / 60_000);
+      console.log(
+        isLeaseLive(l)
+          ? `Lease ${p(l.id)} on "${p(l.target)}" by ${p(l.who)}: ${left} min left. Reason: ${p(l.reason)}`
+          : `Lease ${p(l.id)} on "${p(l.target)}" expired at ${p(l.expiresAt)}. Run: daypass close ${p(l.target)}`,
+      );
+    }
   });
 
 program
-  .command('close')
-  .description('End the lease now and remove the network rule')
-  .action(async () => {
-    let l: Lease | null;
+  .command('close [target]')
+  .description('End one lease (or every lease) now and remove its network rule')
+  .action(async (target?: string) => {
+    let leases: Lease[];
     try {
-      l = await readLease();
+      leases = await readLeases();
     } catch (e: any) {
-      if (!(e instanceof LeaseCorruptError)) throw e;
+      // Only bare `daypass close` wipes a corrupt file: `close <target>` cannot tell what else it holds.
+      if (!(e instanceof LeaseCorruptError) || target !== undefined) throw e;
       await clearLease();
-      console.warn('Removed the corrupt lease file. If it held a security-group rule, run: daypass sweep <target>');
+      console.warn(
+        'Removed the corrupt lease file, and with it every lease. Security-group rules those leases held stay until they expire; then run: daypass sweep <target>',
+      );
       return;
     }
-    if (!l) return console.log('No lease.');
-    // The lease records where its rule lives; older leases fall back to the config.
-    const recorded = !!(l.sgRegion && l.sgGroupId);
-    let cfg: { targets: Record<string, TargetConfig> } | undefined;
-    if (l.sgRuleId && !recorded) {
+    const pick = target === undefined ? leases : leases.filter((l) => l.target === target);
+    if (!pick.length) return console.log(target === undefined ? 'No lease.' : `No lease on "${p(target)}".`);
+    // The lease records where its rule lives; older leases fall back to the config, read at most once.
+    let cfgRead: Promise<{ targets: Record<string, TargetConfig> } | string> | undefined;
+    const closeOne = async (l: Lease) => {
+      const recorded = !!(l.sgRegion && l.sgGroupId);
+      let cfg: { targets: Record<string, TargetConfig> } | undefined;
+      if (l.sgRuleId && !recorded) {
+        const c = await (cfgRead ??= readConfig().catch((e: any) => String(e?.message ?? e)));
+        if (typeof c === 'string') {
+          console.warn(
+            `warning: cannot read the config (${p(c)}); security-group rule ${p(l.sgRuleId)} was NOT revoked. ` +
+              `Restore the config and run: daypass sweep ${p(l.target)}`,
+          );
+        } else cfg = c;
+      }
+      if (l.sgRuleId && (recorded || cfg)) await releaseNetwork(l, cfg?.targets[l.target]);
+      await clearLease(l.target, { ifId: l.id });
+      console.log(`Lease ${p(l.id)} closed.`);
+    };
+    // One lease failing (AWS unreachable) must not leave the others open: try every one.
+    let failed = 0;
+    for (const l of pick) {
       try {
-        cfg = await readConfig();
+        await closeOne(l);
       } catch (e: any) {
-        console.warn(
-          `warning: cannot read the config (${p(e.message)}); security-group rule ${p(l.sgRuleId)} was NOT revoked. ` +
-            `Restore the config and run: daypass sweep ${p(l.target)}`,
-        );
+        failed++;
+        console.error(`Lease ${p(l.id)} on "${p(l.target)}" was NOT closed: ${p(e?.message ?? String(e))}`);
       }
     }
-    if (l.sgRuleId && (recorded || cfg)) await releaseNetwork(l, cfg?.targets[l.target]);
-    await clearLease();
-    console.log(`Lease ${p(l.id)} closed.`);
+    if (failed) throw new Error(`${failed} lease(s) not closed. Fix the cause and run daypass close again.`);
   });
 
 program
@@ -244,10 +307,21 @@ program
     if (!t?.region || !t.securityGroupId) throw new Error('Target has no region/securityGroupId');
     const removed = await sweepExpired({ region: t.region, profile: t.awsProfile, groupId: t.securityGroupId });
     console.log(removed.length ? `Removed ${removed.length} expired rule(s): ${removed.join(', ')}` : 'Nothing to sweep.');
-    const l = await readLease();
+    let l: Lease | undefined;
+    try {
+      l = (await readLeases()).find((x) => x.target === targetName);
+    } catch (e: any) {
+      if (e instanceof LeaseCorruptError) throw new Error(e.message);
+      throw e;
+    }
     if (l && !isLeaseLive(l)) {
-      await clearLease();
-      console.log(`Cleared expired local lease ${p(l.id)}.`);
+      if (l.sgRuleId && l.sgGroupId && (l.sgGroupId !== t.securityGroupId || l.sgRegion !== t.region)) {
+        console.warn(
+          `Kept expired lease ${p(l.id)}: its rule ${p(l.sgRuleId)} is in ${p(l.sgGroupId)} (${p(l.sgRegion)}), not in the group this sweep looked at. Run: daypass close ${p(targetName)}`,
+        );
+      } else if (await clearLease(targetName, { ifId: l.id })) {
+        console.log(`Cleared expired local lease ${p(l.id)}.`);
+      }
     }
   });
 
