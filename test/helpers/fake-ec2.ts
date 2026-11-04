@@ -15,6 +15,8 @@ export interface FakeEc2 {
   revokeDelayMs: number;
   /** Delay before answering an Authorize, in ms. */
   authorizeDelayMs: number;
+  /** When set, every EC2 call (not STS) fails with this HTTP status. Use 403 for a failure the SDK does not retry. */
+  failStatus?: number;
   close(): Promise<void>;
 }
 
@@ -44,6 +46,7 @@ export async function startFakeEc2(): Promise<FakeEc2> {
             '</GetCallerIdentityResult><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata></GetCallerIdentityResponse>',
         );
       }
+      if (fake.failStatus) return send(fake.failStatus, err(fake.failStatus === 403 ? 'UnauthorizedOperation' : 'ServiceUnavailable'));
       if (p.Action === 'RevokeSecurityGroupIngress') {
         if (fake.revokeDelayMs) await new Promise((r) => setTimeout(r, fake.revokeDelayMs));
         const id = p['SecurityGroupRuleId.1'];

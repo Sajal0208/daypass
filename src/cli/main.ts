@@ -257,7 +257,8 @@ program
     try {
       leases = await readLeases();
     } catch (e: any) {
-      if (!(e instanceof LeaseCorruptError)) throw e;
+      // Only bare `daypass close` wipes a corrupt file: `close <target>` cannot tell what else it holds.
+      if (!(e instanceof LeaseCorruptError) || target !== undefined) throw e;
       await clearLease();
       console.warn(
         'Removed the corrupt lease file, and with it every lease. Security-group rules those leases held stay until they expire; then run: daypass sweep <target>',

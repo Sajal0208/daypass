@@ -63,6 +63,7 @@ beforeEach(() => {
   fake.calls.length = 0;
   fake.revokeDelayMs = 0;
   fake.authorizeDelayMs = 0;
+  fake.failStatus = undefined;
 });
 
 describe('writeLease', () => {
@@ -405,15 +406,88 @@ describe('review fixes (PR #29): close, open and sweep with several leases', () 
     expect(r.stderr).not.toMatch(/Run: daypass sweep gone/);
   });
 
-  it('close on a corrupt file says every lease was removed and live rules stay until they expire', async () => {
+  it('close with no target on a corrupt file says every lease was removed and live rules stay until they expire', async () => {
     put('{nope');
-    const r = await cli('close', 'prod');
+    const r = await cli('close');
     expect(r.stderr).toMatch(/every lease/);
     expect(r.stderr).toMatch(/until they expire/);
+    expect(existsSync(LEASE)).toBe(false);
+  });
+
+  it('close <target> on a corrupt file refuses, keeps the file, and points at bare daypass close', async () => {
+    put('{nope');
+    const r = await cli('close', 'prod');
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/corrupt.*Run: daypass close/);
+    expect(r.stderr).not.toMatch(/every lease/);
+    expect(readFileSync(LEASE, 'utf8')).toBe('{nope');
   });
 });
 
 describe('review fixes (PR #29): the MCP server with several leases', () => {
+  // An expired lease whose rule cannot be revoked (someone else's description, or AWS failing)
+  // must not cost two AWS calls on every tool call made on the other, live lease.
+  const expiredAndLive = () => {
+    config({ region: 'us-east-1', securityGroupId: 'sg-1' });
+    put({ version: 2, leases: [
+      lease({ expiresAt: past, sgRuleId: 'sgr-old', sgRegion: 'us-east-1', sgGroupId: 'sg-1' }),
+      lease({ id: 'bbbb2222', target: 'dev' }),
+    ] });
+  };
+  const awsCalls = () => fake.calls.filter((c) => c.Action === 'DescribeSecurityGroupRules' || c.Action === 'RevokeSecurityGroupIngress').length;
+
+  it('a revoke that found another rule in its place is not retried on every tool call', async () => {
+    const server = await import('../src/mcp/server.js');
+    server.resetNetworkReleaseForTests();
+    expiredAndLive();
+    fake.rules.push({ id: 'sgr-old', groupId: 'sg-1', description: 'not ours' });
+    for (let i = 0; i < 5; i++) await call('list_tables', { target: 'dev' });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(awsCalls()).toBe(1);
+    expect(fake.rules).toHaveLength(1);
+  });
+
+  it('a revoke that failed at AWS is not retried on every tool call', async () => {
+    const server = await import('../src/mcp/server.js');
+    server.resetNetworkReleaseForTests();
+    expiredAndLive();
+    fake.failStatus = 403;
+    for (let i = 0; i < 5; i++) await call('list_tables', { target: 'dev' });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(awsCalls()).toBe(1);
+  });
+
+  it('concurrent tool calls share one revoke of the same expired lease', async () => {
+    const server = await import('../src/mcp/server.js');
+    server.resetNetworkReleaseForTests();
+    expiredAndLive();
+    fake.rules.push({ id: 'sgr-old', groupId: 'sg-1', description: `daypass:aaaa1111 until ${past}` });
+    fake.revokeDelayMs = 200;
+    await Promise.all([1, 2, 3, 4].map(() => call('list_tables', { target: 'dev' })));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(fake.rules).toEqual([]);
+    expect(fake.calls.filter((c) => c.Action === 'RevokeSecurityGroupIngress')).toHaveLength(1);
+  });
+
+  it('after the retry window a failed revoke is tried again', async () => {
+    const server = await import('../src/mcp/server.js');
+    server.resetNetworkReleaseForTests(50);
+    try {
+      expiredAndLive();
+      fake.failStatus = 403;
+      await call('list_tables', { target: 'dev' });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(awsCalls()).toBe(1);
+      fake.failStatus = undefined;
+      fake.rules.push({ id: 'sgr-old', groupId: 'sg-1', description: `daypass:aaaa1111 until ${past}` });
+      await call('list_tables', { target: 'dev' });
+      await new Promise((r) => setTimeout(r, 100));
+      expect(fake.rules).toEqual([]);
+    } finally {
+      server.resetNetworkReleaseForTests();
+    }
+  });
+
   it('a call on a live target does not wait for the revoke of another, expired lease', async () => {
     const server = await import('../src/mcp/server.js');
     server.setNetworkReleaseWaitForTests(2000);

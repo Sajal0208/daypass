@@ -82,30 +82,59 @@ export function setNetworkReleaseWaitForTests(ms: number | undefined): void {
 }
 
 /**
+ * After a revoke that did not remove the rule (AWS unreachable or refusing, or the rule is not
+ * the one daypass wrote), that lease is left alone this long. Without it, every tool call on
+ * another, live lease would make the same two failing AWS calls again.
+ */
+const NETWORK_RELEASE_RETRY_MS = 60_000;
+let networkReleaseRetryMs = NETWORK_RELEASE_RETRY_MS;
+/** Per lease id: the revoke in flight, or when the last one that did not revoke may be tried again. */
+const releases = new Map<string, { inFlight?: Promise<void>; retryAt?: number }>();
+/** Tests only: forget every revoke and set the retry window (undefined restores it). */
+export function resetNetworkReleaseForTests(retryMs?: number): void {
+  releases.clear();
+  networkReleaseRetryMs = retryMs ?? NETWORK_RELEASE_RETRY_MS;
+}
+
+/**
  * An expired lease may still hold a security-group rule (nobody ran `daypass close`).
  * Revoke it on sight; `daypass sweep` from cron is the backstop if this fails. A slow AWS
  * answer does not hold up the call: past the wait the revoke finishes in the background.
+ * Concurrent calls share one revoke per lease, and one that did not revoke is not tried
+ * again for a minute.
  */
 function releaseExpiredNetwork(lease: Lease): Promise<void> {
-  return Promise.race([revokeExpired(lease), new Promise<void>((r) => setTimeout(r, networkReleaseWaitMs).unref())]);
+  const bounded = (p: Promise<void>) => Promise.race([p, new Promise<void>((r) => setTimeout(r, networkReleaseWaitMs).unref())]);
+  const prior = releases.get(lease.id);
+  if (prior?.inFlight) return bounded(prior.inFlight);
+  if (prior?.retryAt !== undefined && Date.now() < prior.retryAt) return Promise.resolve();
+  const inFlight = revokeExpired(lease).then((revoked) => {
+    if (revoked) releases.delete(lease.id);
+    else releases.set(lease.id, { retryAt: Date.now() + networkReleaseRetryMs });
+  });
+  releases.set(lease.id, { inFlight });
+  return bounded(inFlight);
 }
 
-async function revokeExpired(lease: Lease): Promise<void> {
+/** True once the rule is gone (or was never this lease's to remove from the file). Never throws. */
+async function revokeExpired(lease: Lease): Promise<boolean> {
   try {
     const t = (await readConfig().catch(() => undefined))?.targets[lease.target];
     const r = await revokeLeaseRule(lease, t);
-    if (!r.revoked) return;
+    if (!r.revoked) return false;
     const { sgRuleId: _dropped, ...rest } = lease;
     // Only if the lease on disk is still this one: `daypass open` may have written a new lease
     // while the revoke was in flight.
     await writeLease(rest, { ifId: lease.id });
+    return true;
   } catch {
     /* sweep cron will catch it */
+    return false;
   }
 }
 
 const targetArg = {
-  target: z.string().optional().describe('Which leased database to use. Needed only when daypass_status lists more than one lease.'),
+  target: z.string().optional().describe('Which leased database to use. Pass it whenever the question names a database; required when daypass_status lists more than one lease.'),
 };
 
 async function ctx(target?: string): Promise<Ctx | string> {

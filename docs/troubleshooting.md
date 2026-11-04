@@ -285,7 +285,12 @@ The `start` audit line could not be appended (disk full, permissions on `~/.dayp
 
 ### `The lease file … is corrupt. Run: daypass close`
 
-`~/.daypass/lease.json` exists but is not a lease (half-written, edited by hand). Every tool and `daypass status` refuse until it is gone. `daypass close` deletes it; if it held a security-group rule, run `daypass sweep <target>`.
+`~/.daypass/lease.json` exists but is not a lease (half-written, edited by hand). Every tool and `daypass status` refuse until it is gone. Bare `daypass close` deletes it; if it held a security-group rule, run `daypass sweep <target>`. `daypass close <target>` refuses on a corrupt file, because it cannot tell which other leases the file held.
+
+Two other ways to see this message:
+
+- **An old server after an upgrade.** A Claude Code session started before `npm i -g daypass` still runs the old MCP server. Daypass 0.2.0 reads a file with two or more leases as corrupt. Restart the session; nothing is wrong with the file.
+- **Downgrading with several leases open.** Run `daypass close` with the new version first. A 0.2.0 `daypass close` deletes the file without revoking the security-group rules in it; they then stay until they expire and `daypass sweep <target>` runs.
 
 ### `Table "x" not found in schema "public", or this lease cannot read any of its columns. Use list_tables for the names.`
 
