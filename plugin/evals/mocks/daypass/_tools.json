@@ -2,7 +2,7 @@
   "tools": [
     {
       "name": "daypass_status",
-      "description": "Show whether a Daypass lease is open, for which database, and how long is left.",
+      "description": "Show which Daypass leases are open, for which database, and how long is left.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -16,9 +16,15 @@
       "name": "list_tables",
       "description": "List the tables and views this lease can read (at least one column), with estimated row counts.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
-        "properties": {}
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Which leased database to use. Needed only when daypass_status lists more than one lease."
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
       },
       "execution": {
         "taskSupport": "forbidden"
@@ -33,6 +39,10 @@
           "table": {
             "type": "string",
             "description": "table name, optionally schema-qualified"
+          },
+          "target": {
+            "type": "string",
+            "description": "Which leased database to use. Needed only when daypass_status lists more than one lease."
           }
         },
         "required": [
@@ -54,6 +64,10 @@
           "sql": {
             "type": "string",
             "description": "A single SELECT statement"
+          },
+          "target": {
+            "type": "string",
+            "description": "Which leased database to use. Needed only when daypass_status lists more than one lease."
           }
         },
         "required": [
@@ -75,6 +89,10 @@
           "sql": {
             "type": "string",
             "description": "A single SELECT statement (without the EXPLAIN keyword)"
+          },
+          "target": {
+            "type": "string",
+            "description": "Which leased database to use. Needed only when daypass_status lists more than one lease."
           }
         },
         "required": [

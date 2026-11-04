@@ -156,3 +156,24 @@ describe('doctor: escaping', () => {
     expect(get('config')!.detail).not.toContain('\x1b');
   });
 });
+
+describe('doctor: several leases', () => {
+  const two = { targets: { a: { url: 'postgres://u:p@127.0.0.1:1/a?sslmode=disable' }, b: { url: 'postgres://u:p@127.0.0.1:1/b?sslmode=disable' } } };
+  const until = new Date(Date.now() + 3600e3).toISOString();
+  const l = (id: string, target: string) => ({ id, target, reason: 'r', who: 'me', openedAt: '', expiresAt: until });
+  const setup = (h: string) => {
+    cfg(h, two);
+    writeFileSync(join(h, 'lease.json'), JSON.stringify({ version: 2, leases: [l('aaaa1111', 'a'), l('bbbb2222', 'b')] }), { mode: 0o600 });
+  };
+  it('doctor b checks the lease on b', async () => {
+    const { get } = await run(setup, { target: 'b' });
+    expect(get('lease')).toMatchObject({ ok: true });
+    expect(get('lease')!.detail).toContain('bbbb2222');
+  });
+  it('doctor with no target checks the first config target and its lease', async () => {
+    const { get } = await run(setup);
+    expect(get('target')!.detail).toMatch(/^a: /);
+    expect(get('lease')).toMatchObject({ ok: true });
+    expect(get('lease')!.detail).toContain('aaaa1111');
+  });
+});

@@ -3,13 +3,14 @@ import { connect } from 'node:net';
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import { fromIni } from '@aws-sdk/credential-providers';
 import { isLeaseLive } from '../core/index.js';
+import type { Lease } from '../core/index.js';
 import { promises as fs } from 'node:fs';
 import { ancestorColumns, canonicalEntries, expandHidden, parseHiddenEntry, parseHiddenFile, viewLeaks, HIDDEN_RELKINDS } from '../core/hidden.js';
 import { MATVIEW_LEAKS_SQL, MATVIEW_SQL_PARAMS, UNREADABLE_SOURCES_SQL, USER_SCHEMA } from '../core/matview.js';
 import { printable } from './log.js';
 import { catalog, PIN_SEARCH_PATH } from './hidden.js';
 import type pg from 'pg';
-import { readConfig, readLease, readAuditDetailed, resolveTarget, getPool, closePool, CONFIG_PATH, AUDIT_PATH, DAYPASS_HOME } from '../mcp/index.js';
+import { readConfig, readLeases, readAuditDetailed, resolveTarget, getPool, closePool, CONFIG_PATH, AUDIT_PATH, DAYPASS_HOME } from '../mcp/index.js';
 import { inspectStateFiles } from '../mcp/state.js';
 import { rdsCa, sslOptions } from '../mcp/db.js';
 
@@ -251,13 +252,14 @@ export async function doctor(targetName?: string, opts: { hideFile?: string } = 
     );
   });
 
-  let lease: Awaited<ReturnType<typeof readLease>> = null;
+  let leases: Lease[] = [];
   try {
-    lease = await readLease();
+    leases = await readLeases();
   } catch (e: any) {
     push('lease', false, e?.message || String(e));
   }
-  const name = targetName ?? lease?.target ?? Object.keys(cfg.targets)[0];
+  const name = targetName ?? (leases.length === 1 ? leases[0].target : undefined) ?? Object.keys(cfg.targets)[0];
+  const lease = leases.find((l) => l.target === name) ?? null;
   if (!name) return out;
   const raw = cfg.targets[name];
   if (!raw) {
