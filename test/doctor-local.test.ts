@@ -177,3 +177,22 @@ describe('doctor: several leases', () => {
     expect(get('lease')!.detail).toContain('aaaa1111');
   });
 });
+
+describe('doctor: several leases, no target (review fix, PR #29)', () => {
+  it('checks the first config target that has a live lease, not one with none', async () => {
+    const three = { targets: {
+      a: { url: 'postgres://u:p@127.0.0.1:1/a?sslmode=disable' },
+      b: { url: 'postgres://u:p@127.0.0.1:1/b?sslmode=disable' },
+      c: { url: 'postgres://u:p@127.0.0.1:1/c?sslmode=disable' },
+    } };
+    const until = new Date(Date.now() + 3600e3).toISOString();
+    const l = (id: string, target: string) => ({ id, target, reason: 'r', who: 'me', openedAt: '', expiresAt: until });
+    const { get } = await run((h) => {
+      cfg(h, three);
+      writeFileSync(join(h, 'lease.json'), JSON.stringify({ version: 2, leases: [l('cccc3333', 'c'), l('bbbb2222', 'b')] }), { mode: 0o600 });
+    });
+    expect(get('target')!.detail).toMatch(/^b: /);
+    expect(get('lease')).toMatchObject({ ok: true });
+    expect(get('lease')!.detail).toContain('bbbb2222');
+  });
+});

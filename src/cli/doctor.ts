@@ -258,7 +258,12 @@ export async function doctor(targetName?: string, opts: { hideFile?: string } = 
   } catch (e: any) {
     push('lease', false, e?.message || String(e));
   }
-  const name = targetName ?? (leases.length === 1 ? leases[0].target : undefined) ?? Object.keys(cfg.targets)[0];
+  // No target named: the only lease's, else the first config target with a live lease, else the first one.
+  const name =
+    targetName ??
+    (leases.length === 1 ? leases[0].target : undefined) ??
+    Object.keys(cfg.targets).find((k) => leases.some((l) => l.target === k && isLeaseLive(l))) ??
+    Object.keys(cfg.targets)[0];
   const lease = leases.find((l) => l.target === name) ?? null;
   if (!name) return out;
   const raw = cfg.targets[name];
