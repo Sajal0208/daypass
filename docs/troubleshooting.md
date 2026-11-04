@@ -307,6 +307,14 @@ The lease names a target that was removed or renamed in the config after `open`.
 
 Printed by `daypass open` (exit code 1), not by a tool. One lease per target: this target already has a live lease. Close it first, or wait for it to expire. A lease on another target does not block this one.
 
+### `No lease on "staging". Open: prod. Ask the user to run: daypass open staging …`
+
+A tool error. The call named a target that has no lease. Open one for it, or ask about a database that has a lease (`daypass status` lists them).
+
+### `No live lease; expired: staging, prod. Ask the user to run: daypass open <target> …`
+
+A tool error. Every lease on disk has expired. Open a new one for the database you need.
+
 ### `2 leases are open (staging, prod). Pass target: one of them.`
 
 A tool error. Several leases are open and the call did not say which database to use. Name the target in the question; the agent then passes `target` on every call. `daypass_status` lists the open leases.

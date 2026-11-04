@@ -204,7 +204,7 @@ daypass log -n 5
 When you are done, or just let it expire:
 
 ```bash
-daypass close
+daypass close staging    # with no target, closes every lease
 ```
 
 ## Next
