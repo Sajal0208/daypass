@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/Sajal0208/daypass/compare/v0.2.0...v0.2.1) (2026-11-04)
+
+
+### Features
+
+* several leases at once, one per target ([#29](https://github.com/Sajal0208/daypass/issues/29)) ([31dc070](https://github.com/Sajal0208/daypass/commit/31dc070b347275b3e82b0e3875b32440d0f86b2d))
+
 ## [0.2.0](https://github.com/Sajal0208/daypass/compare/v0.1.1...v0.2.0) (2026-11-04)
 
 Security fixes from the 2026-10-30 and 2026-11-01 reviews (advisory [GHSA-rjrr-9c6p-6wxc](https://github.com/Sajal0208/daypass/security/advisories/GHSA-rjrr-9c6p-6wxc)). **Everyone on 0.1.x: upgrade, then re-run the role setup** (`daypass sql --hide-file … | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1`) and `daypass doctor`. The 0.1.0 role can read hidden columns through views, materialized views, partitions, inheritance children and `SECURITY DEFINER` functions that touch them, and can write through a `SECURITY DEFINER` function that writes.
