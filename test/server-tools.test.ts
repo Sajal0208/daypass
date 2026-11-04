@@ -538,6 +538,39 @@ describe.skipIf(!live)('MCP server tools', () => {
       expect(elapsed).toBeLessThan(6000);
     });
   });
+
+  describe('several leases', () => {
+    const cfgPath = join(home, 'config.json');
+    let saved: string;
+    const v2 = () => {
+      const l = (id: string, target: string) => ({ id, target, reason: 'test', who: 'tester', openedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 30 * 60_000).toISOString() });
+      writeFileSync(join(home, 'lease.json'), JSON.stringify({ version: 2, leases: [l('lease-ws2', 't'), l('lease-t2', 't2')] }));
+    };
+    beforeAll(() => {
+      saved = readFileSync(cfgPath, 'utf8');
+      const cfg = JSON.parse(saved);
+      cfg.targets.t2 = { ...cfg.targets.t };
+      writeFileSync(cfgPath, JSON.stringify(cfg));
+      v2();
+    });
+    afterAll(() => {
+      writeFileSync(cfgPath, saved);
+      writeLease(30 * 60_000);
+    });
+    it('query with target "t2" uses t2 and its lease; the audit says so', async () => {
+      const r = await call('query', { sql: 'select 42 as answer', target: 't2' });
+      expect(r.ok).toBe(true);
+      expect(rowsOf(r.text)).toEqual([{ answer: 42 }]);
+      expect(lastAudit(1)[0]).toMatchObject({ phase: 'end', target: 't2', leaseId: 'lease-t2' });
+    });
+    it('query with no target is refused and nothing runs', async () => {
+      const before = auditLines().length;
+      const r = await call('query', { sql: 'select 42 as answer' });
+      expect(r.ok).toBe(false);
+      expect(r.text).toMatch(/2 leases are open/);
+      expect(auditLines().slice(before).filter((l: any) => l.allowed === true)).toEqual([]);
+    });
+  });
 });
 
 describe('parseTableName', () => {

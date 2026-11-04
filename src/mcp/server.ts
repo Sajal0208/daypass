@@ -4,9 +4,9 @@ import { readFileSync } from 'node:fs';
 import { sha256Hex } from '../core/audit.js';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { checkSql, MAX_SQL_BYTES, wrapWithBudget, shapeBudgetRows, shapeRows, isLeaseLive, shouldReleaseNetwork } from '../core/index.js';
+import { checkSql, MAX_SQL_BYTES, wrapWithBudget, shapeBudgetRows, shapeRows, isLeaseLive, pickLease, shouldReleaseNetwork } from '../core/index.js';
 import type { Lease, GuardResult, AuditEvent } from '../core/index.js';
-import { readConfig, readLease, writeLease, appendAudit, resolveTarget } from './state.js';
+import { readConfig, readLeases, writeLease, appendAudit, resolveTarget } from './state.js';
 import { revokeLeaseRule } from './sg.js';
 import type { ResolvedTarget } from './state.js';
 import { getPool, shutdownPool, resetShutdownForTests as resetPoolShutdown, runBounded, cancelAndDestroy, STATEMENT_TIMEOUT_MS } from './db.js';
@@ -104,21 +104,22 @@ async function revokeExpired(lease: Lease): Promise<void> {
   }
 }
 
-async function ctx(): Promise<Ctx | string> {
-  let lease: Lease | null;
+const targetArg = {
+  target: z.string().optional().describe('Which leased database to use. Needed only when daypass_status lists more than one lease.'),
+};
+
+async function ctx(target?: string): Promise<Ctx | string> {
+  let leases: Lease[];
   try {
-    lease = await readLease();
+    leases = await readLeases();
   } catch (e) {
     return errorMessage(e);
   }
-  if (shouldReleaseNetwork(lease)) await releaseExpiredNetwork(lease!);
-  if (!lease || !isLeaseLive(lease)) {
-    return lease
-      ? `Lease ${lease.id} for "${lease.target}" expired at ${lease.expiresAt}. Ask the user to run: daypass open ${lease.target} --reason "..."`
-      : 'No active Daypass lease. Ask the user to run: daypass open <target> --reason "..."';
-  }
-  const cfg = await readConfig();
-  const raw = cfg.targets[lease.target];
+  await Promise.all(leases.filter((l) => shouldReleaseNetwork(l)).map(releaseExpiredNetwork));
+  const pick = pickLease(leases, target);
+  if (pick.error !== undefined) return pick.error;
+  const lease = pick.lease;
+  const raw = (await readConfig()).targets[lease.target];
   if (!raw) return `Lease target "${lease.target}" is not in config.`;
   try {
     return { lease, target: resolveTarget(lease.target, raw), targetName: lease.target };
@@ -325,27 +326,33 @@ export function buildServer(): McpServer {
 
   server.tool(
     'daypass_status',
-    'Show whether a Daypass lease is open, for which database, and how long is left.',
+    'Show which Daypass leases are open, for which database, and how long is left.',
     {},
     async () => {
-      let lease: Lease | null;
+      let leases: Lease[];
       try {
-        lease = await readLease();
+        leases = await readLeases();
       } catch (e) {
         return fail(errorMessage(e));
       }
-      if (!lease || !isLeaseLive(lease)) return text(lease ? `Expired at ${lease.expiresAt}` : 'No lease open.');
-      const left = Math.round((Date.parse(lease.expiresAt) - Date.now()) / 60_000);
-      return text(`Lease ${lease.id} on "${lease.target}" by ${lease.who}: ${left} min left. Reason: ${lease.reason}`);
+      const line = (l: Lease) =>
+        isLeaseLive(l)
+          ? `Lease ${l.id} on "${l.target}" by ${l.who}: ${Math.round((Date.parse(l.expiresAt) - Date.now()) / 60_000)} min left. Reason: ${l.reason}`
+          : `Lease ${l.id} on "${l.target}" expired at ${l.expiresAt}`;
+      if (leases.length === 0) return text('No lease open.');
+      if (leases.length === 1) return text(isLeaseLive(leases[0]) ? line(leases[0]) : `Expired at ${leases[0].expiresAt}`);
+      const live = leases.filter((l) => isLeaseLive(l)).map((l) => `"${l.target}"`);
+      const hint = live.length > 1 ? `\nPass target: ${live.join(' or ')} to the other tools.` : '';
+      return text(leases.map(line).join('\n') + hint);
     },
   );
 
   server.tool(
     'list_tables',
     'List the tables and views this lease can read (at least one column), with estimated row counts.',
-    {},
-    async () => {
-      const c = await ctx();
+    { ...targetArg },
+    async ({ target }) => {
+      const c = await ctx(target);
       if (typeof c === 'string') return fail(c);
       const schemas = c.target.schemas ?? ['public'];
       // reltuples is -1 until the table is first analyzed (PG 14+): unknown, shown as null.
@@ -362,9 +369,9 @@ export function buildServer(): McpServer {
   server.tool(
     'describe_table',
     'Columns, types, nullability and indexes for one table (indexes touching hidden columns are omitted).',
-    { table: z.string().describe('table name, optionally schema-qualified') },
-    async ({ table }) => {
-      const c = await ctx();
+    { table: z.string().describe('table name, optionally schema-qualified'), ...targetArg },
+    async ({ table, target }) => {
+      const c = await ctx(target);
       if (typeof c === 'string') return fail(c);
       const parsed = parseTableName(table, c.target.schemas?.[0] ?? 'public');
       if (typeof parsed === 'string') return fail(parsed);
@@ -382,9 +389,9 @@ export function buildServer(): McpServer {
   server.tool(
     'query',
     `Run one read-only SELECT against the leased database. Hard limits: one statement, SELECT only, ${STATEMENT_TIMEOUT_MS / 1000} s (or less if the lease is about to expire), up to the configured row cap (default ${DEFAULTS.maxRows} rows) and byte budget (default ${DEFAULTS.maxBytes} bytes); results are cut in the database, not after. Some columns (PII, secrets) are hidden, so SELECT * fails on those tables: use describe_table and name columns. Use explain first on big tables.`,
-    { sql: z.string().describe('A single SELECT statement') },
-    async ({ sql }) => {
-      const c = await ctx();
+    { sql: z.string().describe('A single SELECT statement'), ...targetArg },
+    async ({ sql, target }) => {
+      const c = await ctx(target);
       if (typeof c === 'string') return fail(c);
       return runGuarded('query', sql, c, true);
     },
@@ -393,9 +400,9 @@ export function buildServer(): McpServer {
   server.tool(
     'explain',
     'Show the query plan (EXPLAIN, never ANALYZE) for a SELECT so you can check its cost before running it.',
-    { sql: z.string().describe('A single SELECT statement (without the EXPLAIN keyword)') },
-    async ({ sql }) => {
-      const c = await ctx();
+    { sql: z.string().describe('A single SELECT statement (without the EXPLAIN keyword)'), ...targetArg },
+    async ({ sql, target }) => {
+      const c = await ctx(target);
       if (typeof c === 'string') return fail(c);
       const guard = await guardSafely(sql);
       if (!guard.ok) return refuse('explain', sql, c, guard.reason);
@@ -409,7 +416,8 @@ export function buildServer(): McpServer {
 
 /** Server-level audit line (no tool call to hang it on): crashes caught and shutdowns. */
 async function auditServer(error: string): Promise<void> {
-  const lease = await readLease().catch(() => null);
+  const ls = await readLeases().catch((): Lease[] => []);
+  const lease = ls.length === 1 ? ls[0] : null;
   await appendAudit({
     at: new Date().toISOString(),
     who: lease?.who ?? 'daypass',

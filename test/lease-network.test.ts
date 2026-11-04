@@ -102,6 +102,46 @@ describe('expired-lease cleanup in the server never overwrites a newer lease', (
     expect(now.id).toBe('aaaa1111');
     expect(now.sgRuleId).toBeUndefined();
   });
+  it('two targets: an expired lease on prod gives up its rule; the live dev lease is untouched', async () => {
+    config({ region: 'us-east-1', securityGroupId: 'sg-1' });
+    fake.rules.push({ id: 'sgr-old', groupId: 'sg-1', description: `daypass:aaaa1111 until ${past}` });
+    put({ version: 2, leases: [
+      lease({ expiresAt: past, sgRuleId: 'sgr-old', sgRegion: 'us-east-1', sgGroupId: 'sg-1' }),
+      lease({ id: 'bbbb2222', target: 'dev' }),
+    ] });
+    await call('query', { sql: 'select 1', target: 'dev' });
+    expect(fake.rules).toEqual([]);
+    const now = JSON.parse(readFileSync(LEASE, 'utf8'));
+    expect(now.version).toBe(2);
+    expect(now.leases.find((l: any) => l.target === 'prod').sgRuleId).toBeUndefined();
+    expect(now.leases.find((l: any) => l.target === 'dev').id).toBe('bbbb2222');
+  });
+});
+
+describe('several leases, no database', () => {
+  const two = () => put({ version: 2, leases: [lease({ target: 'prod' }), lease({ id: 'bbbb2222', target: 'dev' })] });
+  it('a tool with no target refuses and names both', async () => {
+    config({}); two();
+    const r = await call('query', { sql: 'select 1' });
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/2 leases are open \(prod, dev\)/);
+  });
+  it('a target with no lease says which are open', async () => {
+    config({}); two();
+    const r = await call('list_tables', { target: 'nope' });
+    expect(r.text).toMatch(/No lease on "nope".*Open: prod, dev/);
+  });
+  it('daypass_status lists every lease and ends with the target hint', async () => {
+    two();
+    const r = await call('daypass_status');
+    expect(r.text).toMatch(/Lease aaaa1111 on "prod"/);
+    expect(r.text).toMatch(/Lease bbbb2222 on "dev"/);
+    expect(r.text).toMatch(/Pass target: "prod" or "dev"/);
+  });
+  it('daypass_status with one expired lease keeps the 0.2.0 text', async () => {
+    put(lease({ expiresAt: past }));
+    expect((await call('daypass_status')).text).toBe(`Expired at ${past}`);
+  });
 });
 
 describe('expired-lease cleanup never holds up a call for long', () => {
