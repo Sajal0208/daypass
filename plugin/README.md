@@ -53,7 +53,7 @@ The bare MCP server gives Claude five tools: `daypass_status`, `list_tables`,
 | `/daypass:daypass-hidden-check` | Compares `hidden-columns.txt` with the schema and reports drift. |
 | PII guard hook | `PreToolUse` on `query` and `explain`: before the SQL leaves Claude Code it tokenizes the statement (quoting, dollar quoting, escapes and comments included), blocks `SELECT *`, `TABLE x`, column alias lists on tables, whole-row references, planner statistics and the functions that run SQL from a string or dump whole tables, and checks every identifier against the same name heuristic `daypass hidden suggest` uses, blocking the call when one looks like personal or secret data and the hidden-columns list says nothing about it. It fails closed. |
 | State guard hook | `PreToolUse` on `Bash`, `Monitor` (which runs a command in the same shell as `Bash`) and the file tools (`Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Grep`, `Glob`): keeps Claude away from Daypass's own state. It blocks `daypass open` and `daypass mcp` from Bash (behind wrappers such as `sudo`, `sh -c`, `xargs` or `npx` too), shell commands that name `~/.daypass` or `$DAYPASS_HOME` (in any case, through quotes, brace expansion or a matching glob), writes to that directory or to `$DAYPASS_HIDDEN_FILE`, reading `config.json` or `lease.json`, and `Grep`/`Glob` over the directory. `daypass status`, `log`, `doctor`, `close`, `hidden` and `sql` stay allowed. It fails closed. |
-| Evals | Scenarios under `evals/` that check the skills behave as documented (no lease, lease open, hidden column). |
+| Evals | Scenarios under `evals/` that check the skills behave as documented (no lease, lease open, hidden column, two leases, a lease on another database). |
 
 ## Daily use
 
@@ -61,7 +61,7 @@ The bare MCP server gives Claude five tools: `daypass_status`, `list_tables`,
 daypass open staging --ttl 45m --reason "why did signups drop on Monday"
 # ask Claude the question; it uses the tools until the lease expires
 daypass log --last 20
-daypass close
+daypass close staging    # no target closes every lease
 ```
 
 With no lease open, every tool except `daypass_status` answers

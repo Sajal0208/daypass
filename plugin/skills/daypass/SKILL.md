@@ -28,15 +28,22 @@ Never run `daypass open` yourself, never ask for a password, never ask for a
 connection URL. The user opens the door; you only tell them the exact line. When they
 say it is open, call `daypass_status` again and go on.
 
-Any other tool failing with `No active Daypass lease…` or `Lease <id> for "<target>"
-expired at …` means the same thing: send the line, stop. That refusal does name the
-target; use it.
+Any other tool failing with `No active Daypass lease…`, `Lease <id> for "<target>"
+expired at …`, `No lease on "<target>". Open: …` or `No live lease; expired: …` means
+the same thing: send the line, stop. When the refusal names the target, use it.
 
-**Several leases.** `daypass_status` may print one line per lease (`Lease <id> on "<t>"
-… min left …` or `Lease <id> on "<t>" expired at …`) and a last line `Pass target: "a"
-or "b" …`. Then pass `target` on **every** `list_tables`, `describe_table`, `query` and
-`explain` call, chosen from the question. If the question does not say which database,
-ask in one line and stop. Name the target in the answer and in the sign-off.
+**Which database.** A call without `target` runs on whichever lease is live, which may
+not be the database the user means. So:
+
+- When the question names a database, pass it as `target` on **every** `list_tables`,
+  `describe_table`, `query` and `explain` call, even when only one lease is open. If that
+  database has no live lease, the tool says so: send the open line for it and stop. Never
+  answer from another database.
+- When `daypass_status` prints more than one line (`Lease <id> on "<t>" … min left …`,
+  `Lease <id> on "<t>" expired at …`, maybe a last line `Pass target: "a" or "b" …`),
+  pass `target` on every call. If the question does not say which database, ask in one
+  line and stop.
+- Name the target in the answer and in the sign-off.
 
 To end a lease, suggest `daypass close <target>`. Never run or suggest bare `daypass
 close` unless the user asks to close everything: it closes every lease.
