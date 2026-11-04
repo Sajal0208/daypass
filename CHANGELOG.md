@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/Sajal0208/daypass/compare/v0.2.1...v0.2.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* **release:** smoke-test the packed CLI through a file, not a pipe ([#31](https://github.com/Sajal0208/daypass/issues/31)) ([a2f51d4](https://github.com/Sajal0208/daypass/commit/a2f51d4d90f49b511c66e5f775c14c817088dc0a))
+
 ## [0.2.1](https://github.com/Sajal0208/daypass/compare/v0.2.0...v0.2.1) (2026-11-04)
 
 
