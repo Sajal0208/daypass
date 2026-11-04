@@ -319,7 +319,9 @@ describe('decide: regressions from the 2026-10-30 bypass review (each one leaked
     for (const sql of ['select ' + 'x,a('.repeat(100_000), 'select 1 ' + 'from('.repeat(100_000), 'with ' + 'a as (select 1), '.repeat(20_000) + 'b as (select 1) select 1']) {
       const t0 = Date.now();
       decide(sql, LIST, env());
-      expect(Date.now() - t0, sql.slice(0, 20)).toBeLessThan(1500);
+      // Linear: ~0.2 s per 100k repeats on a laptop, up to ~1.8 s on a loaded CI runner.
+      // Quadratic behaviour would take minutes here, so 5 s still catches it without flaking.
+      expect(Date.now() - t0, sql.slice(0, 20)).toBeLessThan(5000);
     }
   });
 });
