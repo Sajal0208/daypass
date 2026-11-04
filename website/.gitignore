@@ -31,6 +31,7 @@ src/content/docs/changelog.md
 src/content/docs/security.md
 src/content/docs/roadmap.md
 src/content/docs/support.md
+src/content/docs/blog/
 public/assets/
 .vercel
 .env*
