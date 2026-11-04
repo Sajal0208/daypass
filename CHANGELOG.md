@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## [0.2.0](https://github.com/Sajal0208/daypass/compare/v0.1.1...v0.2.0) (2026-11-04)
 
-Security fixes from the 2026-10-30 review. **Everyone on 0.1.0: upgrade, then re-run the role setup** (`daypass sql --hide-file … | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1`) and `daypass doctor`. The 0.1.0 role can read hidden columns through views, materialized views, partitions, inheritance children and `SECURITY DEFINER` functions that touch them, and can write through a `SECURITY DEFINER` function that writes.
+Security fixes from the 2026-10-30 and 2026-11-01 reviews (advisory [GHSA-rjrr-9c6p-6wxc](https://github.com/Sajal0208/daypass/security/advisories/GHSA-rjrr-9c6p-6wxc)). **Everyone on 0.1.x: upgrade, then re-run the role setup** (`daypass sql --hide-file … | psql -X "$OWNER_URL" -v ON_ERROR_STOP=1`) and `daypass doctor`. The 0.1.0 role can read hidden columns through views, materialized views, partitions, inheritance children and `SECURITY DEFINER` functions that touch them, and can write through a `SECURITY DEFINER` function that writes.
+
+### ⚠ BREAKING CHANGES
+
+* the role setup must be re-run; grants are now explicit per relation with no default privileges.
 
 ### Role setup (`sql/setup-role.sql`)
 
@@ -35,6 +39,10 @@ Security fixes from the 2026-10-30 review. **Everyone on 0.1.0: upgrade, then re
 ### Release
 
 - The release workflow is split into build and publish jobs, SHA-pinned, and set up for npm trusted publishing behind a reviewed environment. That maintainer setup is still pending (see CONTRIBUTING.md).
+
+### Commits
+
+* security fixes from the 2026-10-30 and 2026-11-01 reviews ([#26](https://github.com/Sajal0208/daypass/issues/26)) ([e66e6b0](https://github.com/Sajal0208/daypass/commit/e66e6b08c7a13b4c8edfb5f8cdc2aaced4c1162f))
 
 ## [0.1.1](https://github.com/Sajal0208/daypass/compare/v0.1.0...v0.1.1) (2026-11-01)
 
