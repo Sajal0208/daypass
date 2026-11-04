@@ -2,6 +2,8 @@
 
 ## [0.2.2](https://github.com/Sajal0208/daypass/compare/v0.2.1...v0.2.2) (2026-11-04)
 
+The first release on npm since 0.1.0. 0.2.1 (several leases at once, below) was tagged but its release build failed before publishing, so it never reached npm; 0.2.2 is 0.2.1 plus that build fix. Everything in the 0.2.1 and 0.2.0 entries applies: **upgrade, re-run the role setup, run `daypass doctor`.**
+
 
 ### Bug Fixes
 
