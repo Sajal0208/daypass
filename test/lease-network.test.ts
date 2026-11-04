@@ -295,7 +295,7 @@ describe('daypass open', () => {
     const c2 = await cli('close');
     expect(c2.stdout.match(/closed/g)).toHaveLength(2);
     expect(existsSync(LEASE)).toBe(false);
-  });
+  }, 20_000); // five CLI spawns; the node 20 CI runner took over 5 s twice
 
   it('refuses a second target behind the same security group and port, before touching AWS', async () => {
     writeFileSync(join(home, 'config.json'), JSON.stringify({ targets: {
