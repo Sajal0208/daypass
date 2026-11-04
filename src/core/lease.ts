@@ -16,6 +16,8 @@ export interface Lease {
   sgRegion?: string;
   sgGroupId?: string;
   sgProfile?: string;
+  /** Port the rule opens, recorded with sgGroupId, so `open` can spot a second target behind the same rule. */
+  sgPort?: number;
 }
 
 export function isLeaseLive(l: Lease | null | undefined, now = Date.now()): boolean {
@@ -37,4 +39,26 @@ export function parseTtl(s: string): number {
 /** An expired lease that still holds a security-group rule must have that rule revoked. */
 export function shouldReleaseNetwork(l: Lease | null | undefined, now = Date.now()): boolean {
   return !!l && !isLeaseLive(l, now) && !!l.sgRuleId;
+}
+
+export type Pick = { lease: Lease; error?: undefined } | { lease?: undefined; error: string };
+
+const openHint = (t: string) => `Ask the user to run: daypass open ${t} --reason "..."`;
+const expiredMsg = (l: Lease) => `Lease ${l.id} for "${l.target}" expired at ${l.expiresAt}. ${openHint(l.target)}`;
+
+/** Which lease a tool call uses: the named target's, or the only live one. */
+export function pickLease(leases: Lease[], target?: string, now = Date.now()): Pick {
+  const live = leases.filter((l) => isLeaseLive(l, now));
+  const names = (ls: Lease[]) => ls.map((x) => x.target).join(', ');
+  if (target !== undefined) {
+    const l = leases.find((x) => x.target === target);
+    if (l && isLeaseLive(l, now)) return { lease: l };
+    if (l) return { error: expiredMsg(l) };
+    return { error: `No lease on "${target}". Open: ${names(live) || 'none'}. ${openHint(target)}` };
+  }
+  if (live.length === 1) return { lease: live[0] };
+  if (live.length > 1) return { error: `${live.length} leases are open (${names(live)}). Pass target: one of them.` };
+  if (leases.length === 1) return { error: expiredMsg(leases[0]) };
+  if (leases.length > 1) return { error: `No live lease; expired: ${names(leases)}. ${openHint('<target>')}` };
+  return { error: `No active Daypass lease. ${openHint('<target>')}` };
 }
