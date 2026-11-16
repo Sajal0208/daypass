@@ -1,6 +1,6 @@
 {
   "name": "daypass",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "description": "Temporary, read-only, audited database access for AI coding agents. A human opens a lease; Claude Code (or any MCP client) gets SELECT-only tools until it expires.",
   "keywords": [
     "mcp",
@@ -36,6 +36,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli/main.js",
+    "pretest": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "npm run build && npm test"

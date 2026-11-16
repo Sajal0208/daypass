@@ -34,6 +34,13 @@ describe('getPool', () => {
     }
     expect(b).not.toBe(a);
   });
+  it('keeps one pool per target: switching back and forth reuses both', async () => {
+    const a = await getPool('t', t);
+    const b = await getPool('u', { ...t, database: 'other' });
+    expect(await getPool('t', t)).toBe(a);
+    expect(await getPool('u', { ...t, database: 'other' })).toBe(b);
+    expect(a).not.toBe(b);
+  });
   it('a caller holding the previous pool can still use it after the key changed', async () => {
     const a = await getPool('t', t);
     const b = await getPool('t', { ...t, port: 5433 });

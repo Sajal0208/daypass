@@ -4,8 +4,8 @@ export { wrapWithLimit, wrapWithBudget, shapeRows, shapeBudgetRows, parseJsonPre
 export type { ShapeOptions, Shaped } from './shape.js';
 export { formatAudit } from './audit.js';
 export type { AuditEvent } from './audit.js';
-export { isLeaseLive, parseTtl, shouldReleaseNetwork } from './lease.js';
-export type { Lease } from './lease.js';
+export { isLeaseLive, parseTtl, pickLease, shouldReleaseNetwork } from './lease.js';
+export type { Lease, Pick } from './lease.js';
 export { looksSensitive, suggestHidden, parsePrismaColumns, parseHiddenList, parseHiddenFile, diffHidden } from './hidden.js';
 export type { ColumnInfo } from './hidden.js';
 export type { MatviewTaint } from './hidden.js';

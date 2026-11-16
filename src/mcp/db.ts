@@ -64,7 +64,8 @@ export function isRdsHost(host: string): boolean {
   return RDS_HOST.test(host);
 }
 
-let cached: { key: string; pool: pg.Pool } | null = null;
+/** One pool per target name, each holding its current config key. */
+const cached = new Map<string, { key: string; pool: pg.Pool }>();
 /** Pools replaced after a config change, ended once nobody is waiting on them. */
 const retired = new Set<pg.Pool>();
 
@@ -132,15 +133,17 @@ function retire(pool: pg.Pool): void {
 }
 
 /**
- * One connection per process, per target: the role's CONNECTION LIMIT is shared by every
- * Daypass process (one per AI session), so concurrent calls queue here instead. An idle
+ * One connection per target per process: the role's CONNECTION LIMIT is shared by every
+ * Daypass process (one per AI session), so concurrent calls queue here instead. Two leases on
+ * targets that share a role use two of its CONNECTION LIMIT slots. An idle
  * connection is closed after a few seconds. Even if the DB role were misconfigured, every
  * connection also forces read-only + timeouts at the session level.
  */
 export async function getPool(name: string, t: ResolvedTarget): Promise<pg.Pool> {
   if (shuttingDown) throw new Error('Daypass is shutting down; no new database connections.');
   const key = poolKey(name, t);
-  if (cached && cached.key === key) return cached.pool;
+  const have = cached.get(name);
+  if (have && have.key === key) return have.pool;
   const pool = new pg.Pool({
     host: t.host,
     port: t.port,
@@ -160,8 +163,8 @@ export async function getPool(name: string, t: ResolvedTarget): Promise<pg.Pool>
       ` -c standard_conforming_strings=on`,
   });
   pool.on('error', () => {});
-  if (cached) retire(cached.pool);
-  cached = { key, pool };
+  if (have) retire(have.pool);
+  cached.set(name, { key, pool });
   return pool;
 }
 
@@ -232,9 +235,9 @@ export async function cancelAndDestroy(client: pg.PoolClient | pg.Client, why: E
 }
 
 export async function closePool(): Promise<void> {
-  const pools = [...retired, ...(cached ? [cached.pool] : [])];
+  const pools = [...retired, ...[...cached.values()].map((c) => c.pool)];
   retired.clear();
-  cached = null;
+  cached.clear();
   await Promise.all(pools.map((p) => p.end().catch(() => {})));
 }
 

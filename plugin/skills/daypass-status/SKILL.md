@@ -12,13 +12,15 @@ Run with Bash:
 daypass status
 ```
 
-The CLI prints exactly one of these; report it as described:
+The CLI prints `No lease.` or one line per lease; report each line as described (with several
+lines, report each lease):
 
 - `Lease <id> on "<target>" by <who>: <N> min left. Reason: <reason>` — a live lease. One line per
   field: lease id, target, who, reason, minutes left. Say the MCP tools (`query`, `explain`,
   `list_tables`, `describe_table`) work until it expires.
-- `Lease <id> on "<target>" expired at <ISO>. Run: daypass close` — expired. Tell the user to run
-  `daypass close`, then print the `daypass open` line exactly as in the next case.
+- `Lease <id> on "<target>" expired at <ISO>. Run: daypass close <target>` — expired. Tell the user
+  to run that exact `daypass close <target>` line, then print the `daypass open` line exactly as in
+  the next case.
 - `No lease.` — print the exact line the user can paste. The target is a name from the conversation
   (ask the user when it is not there); the reason goes into every audit line, so it must say why,
   in one short phrase (`"why did signups drop on Monday"`, a ticket id):

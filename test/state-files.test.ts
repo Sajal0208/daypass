@@ -35,7 +35,7 @@ describe.skipIf(!posix)('~/.daypass files: symlinks are refused', () => {
     const outside = join(root, 'victim-lease');
     writeFileSync(outside, JSON.stringify(lease));
     const { home, state } = await fresh((h) => symlinkSync(outside, join(h, 'lease.json')));
-    await expect(state.readLease()).rejects.toThrow(/symlink/);
+    await expect(state.readLeases()).rejects.toThrow(/symlink/);
     await expect(state.writeLease({ ...lease, id: 'bbbb2222' })).rejects.toThrow(/symlink/);
     expect(JSON.parse(readFileSync(outside, 'utf8')).id).toBe('aaaa1111');
     expect(lstatSync(join(home, 'lease.json')).isSymbolicLink()).toBe(true);
@@ -62,13 +62,13 @@ describe.skipIf(!posix)('~/.daypass files: symlinks are refused', () => {
     process.env.DAYPASS_HOME = link;
     vi.resetModules();
     const state = await import('../src/mcp/state.js');
-    await expect(state.readLease()).rejects.toThrow(/symlink/);
+    await expect(state.readLeases()).rejects.toThrow(/symlink/);
     await expect(state.appendAudit(ev)).rejects.toThrow(/symlink/);
     expect(existsSync(join(real, 'audit.jsonl'))).toBe(false);
   });
   it('a lease.json that is not a regular file is refused', async () => {
     const { state } = await fresh((h) => mkdirSync(join(h, 'lease.json')));
-    await expect(state.readLease()).rejects.toThrow(/not a regular file/);
+    await expect(state.readLeases()).rejects.toThrow(/not a regular file/);
   });
 });
 
@@ -100,7 +100,7 @@ describe.skipIf(!posix)('~/.daypass files: loose modes are tightened on every us
     });
     await state.writeLease({ ...lease, id: 'cccc3333' });
     expect(statSync(join(home, 'lease.json')).mode & 0o777).toBe(0o600);
-    expect((await state.readLease())!.id).toBe('cccc3333');
+    expect((await state.readLeases())[0].id).toBe('cccc3333');
   });
   it('daypass init tightens an existing 0755 home', async () => {
     const home = join(root, 'init-home');
@@ -143,7 +143,7 @@ describe.skipIf(!posix)('~/.daypass files: hard links, FIFOs and the lease lock 
       Array.from({ length: 8 }, (_, i) => state.writeLease({ ...lease, id: `new${i}` }, { ifId: lease.id })),
     );
     expect(results.filter(Boolean)).toHaveLength(1);
-    const now = await state.readLease();
+    const now = (await state.readLeases())[0] ?? null;
     expect(now!.id).toBe(`new${results.indexOf(true)}`);
   });
   it('a stale lock left by a crashed process is broken; a fresh one is waited for', async () => {
@@ -161,6 +161,107 @@ describe.skipIf(!posix)('~/.daypass files: hard links, FIFOs and the lease lock 
     expect(done).toBe(false);
     rmSync(lock);
     await expect(p).resolves.toBe(true);
-    expect((await state.readLease())!.id).toBe('later');
+    expect((await state.readLeases())[0].id).toBe('later');
   });
+});
+
+describe('lease.json: one lease per target', () => {
+  const file = (h: string) => JSON.parse(readFileSync(join(h, 'lease.json'), 'utf8'));
+  it('reads a 0.2.0 single-lease file as one lease', async () => {
+    const { state } = await fresh((h) => writeFileSync(join(h, 'lease.json'), JSON.stringify(lease), { mode: 0o600 }));
+    expect((await state.readLeases()).map((l: any) => l.id)).toEqual(['aaaa1111']);
+  });
+  it('one lease is written in the 0.2.0 shape', async () => {
+    const { home, state } = await fresh();
+    await state.writeLease(lease);
+    expect(file(home)).toMatchObject({ id: 'aaaa1111', target: 't' });
+    expect(file(home).version).toBeUndefined();
+  });
+  it('a second target switches to v2 and keeps the first', async () => {
+    const { home, state } = await fresh();
+    await state.writeLease(lease);
+    await state.writeLease({ ...lease, id: 'bbbb2222', target: 'u' });
+    expect(file(home).version).toBe(2);
+    expect((await state.readLeases()).map((l: any) => l.target).sort()).toEqual(['t', 'u']);
+  });
+  it('writeLease replaces the lease for the same target', async () => {
+    const { state } = await fresh();
+    await state.writeLease(lease);
+    await state.writeLease({ ...lease, id: 'cccc3333' });
+    expect((await state.readLeases()).map((l: any) => l.id)).toEqual(['cccc3333']);
+  });
+  it('ifId compares against the lease for that target only', async () => {
+    const { state } = await fresh();
+    await state.writeLease(lease);
+    await state.writeLease({ ...lease, id: 'u1', target: 'u' });
+    expect(await state.writeLease({ ...lease, id: 'x' }, { ifId: 'u1' })).toBe(false);
+    expect(await state.writeLease({ ...lease, id: 'x' }, { ifId: 'aaaa1111' })).toBe(true);
+    expect(await state.writeLease({ ...lease, id: 'v', target: 'v' }, { ifId: null })).toBe(true);
+    expect(await state.writeLease({ ...lease, id: 'v2', target: 'v' }, { ifId: null })).toBe(false);
+  });
+  it('clearLease(target) removes one and goes back to the 0.2.0 shape; clearLease() removes all', async () => {
+    const { home, state } = await fresh();
+    await state.writeLease(lease);
+    await state.writeLease({ ...lease, id: 'u1', target: 'u' });
+    await state.clearLease('t');
+    expect(file(home)).toMatchObject({ id: 'u1', target: 'u' });
+    await state.writeLease(lease);
+    await state.clearLease();
+    expect(existsSync(join(home, 'lease.json'))).toBe(false);
+  });
+  it('clearLease(last target) removes the file', async () => {
+    const { home, state } = await fresh();
+    await state.writeLease(lease);
+    await state.clearLease('t');
+    expect(existsSync(join(home, 'lease.json'))).toBe(false);
+  });
+  it('a v2 file with a bad entry or a duplicate target is corrupt', async () => {
+    for (const leases of [[{ id: 1 }], [lease, { ...lease, id: 'dup' }]]) {
+      const { state } = await fresh((h) => writeFileSync(join(h, 'lease.json'), JSON.stringify({ version: 2, leases }), { mode: 0o600 }));
+      await expect(state.readLeases()).rejects.toThrow(/corrupt/);
+    }
+  });
+  it('two opens of the same target at once: exactly one wins', async () => {
+    const { state } = await fresh();
+    const rs = await Promise.all([1, 2, 3].map((i) => state.writeLease({ ...lease, id: `r${i}` }, { ifId: null })));
+    expect(rs.filter(Boolean)).toHaveLength(1);
+  });
+  it('corrupt file: an unconditional write and clearLease(target) refuse; ifId returns false; clearLease() removes it', async () => {
+    const { home, state } = await fresh((h) => writeFileSync(join(h, 'lease.json'), '{nope', { mode: 0o600 }));
+    await expect(state.writeLease(lease)).rejects.toThrow(/corrupt/);
+    await expect(state.clearLease('t')).rejects.toThrow(/corrupt/);
+    expect(await state.writeLease(lease, { ifId: null })).toBe(false);
+    expect(readFileSync(join(home, 'lease.json'), 'utf8')).toBe('{nope');
+    await state.clearLease();
+    expect(existsSync(join(home, 'lease.json'))).toBe(false);
+  });
+});
+
+describe('lease.json: review fixes (PR #29)', () => {
+  it('a v2 file with no leases is corrupt, not empty', async () => {
+    const { state } = await fresh((h) => writeFileSync(join(h, 'lease.json'), JSON.stringify({ version: 2, leases: [] }), { mode: 0o600 }));
+    await expect(state.readLeases()).rejects.toThrow(/corrupt/);
+  });
+  it('clearLease(target, { ifId }) removes the lease only while it still has that id', async () => {
+    const { state } = await fresh();
+    await state.writeLease(lease);
+    expect(await state.clearLease('t', { ifId: 'other' })).toBe(false);
+    expect((await state.readLeases()).map((l: any) => l.id)).toEqual(['aaaa1111']);
+    expect(await state.clearLease('t', { ifId: 'aaaa1111' })).toBe(true);
+    expect(await state.readLeases()).toEqual([]);
+  });
+  it('several processes breaking the same stale lock never lose a target', async () => {
+    const STATE = join(resolve(__dirname, '..'), 'dist', 'mcp', 'state.js');
+    const script = `const s = await import(${JSON.stringify(STATE)}); await s.writeLease({ id: 'id-' + process.argv[1], target: process.argv[1], reason: 'r', who: 'w', openedAt: '', expiresAt: '2999-01-01T00:00:00Z' });`;
+    for (let round = 0; round < 8; round++) {
+      const { home, state } = await fresh();
+      const lock = join(home, '.lease.lock');
+      writeFileSync(lock, 'crashed');
+      const old = new Date(Date.now() - 60_000);
+      utimesSync(lock, old, old);
+      const names = ['t1', 't2', 't3', 't4', 't5', 't6'];
+      await Promise.all(names.map((n) => promisify(execFile)('node', ['--input-type=module', '-e', script, n], { env: { ...process.env, DAYPASS_HOME: home } })));
+      expect((await state.readLeases()).map((l: any) => l.target).sort(), `round ${round}`).toEqual(names);
+    }
+  }, 60_000);
 });

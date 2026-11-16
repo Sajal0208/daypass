@@ -193,7 +193,7 @@ daypass doctor                    # config → DNS → AWS creds → TCP → log
 #   ... ask Claude questions; it uses list_tables / describe_table / explain / query ...
 daypass status
 daypass log --last 20             # one row per call
-daypass close                     # or just let it expire
+daypass close prod                # or let it expire; no target closes every lease
 ```
 
 With no live lease every tool except `daypass_status` refuses: *"No active Daypass lease. Ask the
