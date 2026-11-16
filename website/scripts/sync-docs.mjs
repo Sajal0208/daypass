@@ -8,6 +8,7 @@
  *   ../SECURITY.md           -> src/content/docs/security.md        (/security/)
  *   ../ROADMAP.md            -> src/content/docs/roadmap.md         (/roadmap/)
  *   ../SUPPORT.md            -> src/content/docs/support.md         (/support/)
+ *   ../docs/launch/blog-the-wall.md -> src/content/docs/blog/the-wall.md (/blog/the-wall/)
  *   ../docs/assets/*         -> public/assets/*                     (/assets/<file>)
  *
  * Only the top level of docs/ is copied (not plans/, launch/, assets/ or any other subfolder), and
@@ -48,6 +49,7 @@ const ROOT_PAGES = {
 	'SECURITY.md': 'security',
 	'ROADMAP.md': 'roadmap',
 	'SUPPORT.md': 'support',
+	'docs/launch/blog-the-wall.md': 'blog/the-wall',
 };
 
 /**
@@ -296,6 +298,7 @@ async function syncRootPages() {
 	for (const [file, slug] of Object.entries(ROOT_PAGES)) {
 		const src = path.join(repoRoot, file);
 		const dest = path.join(contentDir, `${slug}.md`);
+		await mkdir(path.dirname(dest), { recursive: true });
 		if (!(await exists(src))) {
 			log(`notice: ${file} not found; skipping /${slug}/`);
 			await rm(dest, { force: true });
