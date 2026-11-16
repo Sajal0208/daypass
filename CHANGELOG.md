@@ -2,14 +2,14 @@
 
 ## [0.2.3](https://github.com/Sajal0208/daypass/compare/v0.2.2...v0.2.3) (2026-11-16)
 
+The first release on npm since 0.1.0. 0.2.1 and 0.2.2 (below) were tagged but their release runs failed before publishing, so neither reached npm; 0.2.3 is 0.2.1 plus two release-workflow fixes. Everything in the 0.2.1 and 0.2.0 entries applies: **upgrade, re-run the role setup, run `daypass doctor`.**
+
 
 ### Bug Fixes
 
 * **release:** publish the tarball by a ./ path so npm does not read it as a GitHub repo ([#45](https://github.com/Sajal0208/daypass/issues/45)) ([b141a23](https://github.com/Sajal0208/daypass/commit/b141a23c72f8f559fc500542d8eb8e33c0c1d669))
 
 ## [0.2.2](https://github.com/Sajal0208/daypass/compare/v0.2.1...v0.2.2) (2026-11-04)
-
-The first release on npm since 0.1.0. 0.2.1 (several leases at once, below) was tagged but its release build failed before publishing, so it never reached npm; 0.2.2 is 0.2.1 plus that build fix. Everything in the 0.2.1 and 0.2.0 entries applies: **upgrade, re-run the role setup, run `daypass doctor`.**
 
 
 ### Bug Fixes
