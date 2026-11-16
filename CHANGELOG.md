@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.4](https://github.com/Sajal0208/daypass/compare/v0.2.3...v0.2.4) (2026-11-16)
+
+
+### Features
+
+* **site:** publish the launch blog post at /blog/the-wall/ ([#28](https://github.com/Sajal0208/daypass/issues/28)) ([dad3648](https://github.com/Sajal0208/daypass/commit/dad3648b5bb7445e2c5bf46f28d626f8aab682d2))
+
 ## [0.2.3](https://github.com/Sajal0208/daypass/compare/v0.2.2...v0.2.3) (2026-11-16)
 
 The first release on npm since 0.1.0. 0.2.1 and 0.2.2 (below) were tagged but their release runs failed before publishing, so neither reached npm; 0.2.3 is 0.2.1 plus two release-workflow fixes. Everything in the 0.2.1 and 0.2.0 entries applies: **upgrade, re-run the role setup, run `daypass doctor`.**
