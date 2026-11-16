@@ -131,10 +131,12 @@ jobs:
           npm install -g --ignore-scripts npm@11.21.1
           npm --version
       # Publishing the tarball ships exactly what build tested and runs no lifecycle scripts.
+      # `./` matters: npm reads a bare `release/daypass-x.y.z.tgz` as the GitHub shorthand
+      # owner/repo and tries to clone it (the v0.2.2 publish failed that way).
       - name: Publish the smoke-tested tarball
         env:
           TGZ: ${{ needs.build.outputs.tgz }}
-        run: npm publish "release/$TGZ" --provenance --access public
+        run: npm publish "./release/$TGZ" --provenance --access public
 
   release-notes:
     needs: publish
