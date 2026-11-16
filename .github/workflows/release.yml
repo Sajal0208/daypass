@@ -146,7 +146,7 @@ jobs:
     steps:
       # release-please has usually created this release already, with the CHANGELOG section
       # as its body. append_body keeps that and adds GitHub's generated notes below it.
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           generate_release_notes: true
           append_body: true
